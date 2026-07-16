@@ -14,17 +14,14 @@ import {
   Presentation,
   Shapes,
   ShieldAlert,
-  Sparkles,
   ScrollText,
 } from 'lucide-react'
 import { db } from '@/domain/db'
 import { canAccessCase } from '@/domain/access'
-import type { CaseStatus } from '@/domain/types'
-import { cn, PRIORITY_META, STATUS_META } from '@/lib/utils'
-import { Avatar, Badge, IconButton, Progress, Select, tone } from '@/components/ui/primitives'
+import { cn, PRIORITY_META } from '@/lib/utils'
+import { IconButton, tone } from '@/components/ui/primitives'
 import { PageSpinner } from '@/components/ui/PageSpinner'
 import { useSession } from '@/stores/session'
-import { toast } from '@/stores/toast'
 
 const TABS = [
   { to: 'registration', label: 'Case Registration', icon: ClipboardList, count: (c: Counts) => c.documents },
@@ -53,7 +50,6 @@ export function CaseLayout() {
   const { caseId = '' } = useParams()
   const userId = useSession((s) => s.userId)
   const c = useLiveQuery(() => db.cases.get(caseId), [caseId])
-  const assignee = useLiveQuery(() => (c ? db.users.get(c.assigneeId) : undefined), [c?.assigneeId])
 
   /** Undefined while loading — the gate must not flash "no access" first. */
   const access = useLiveQuery(async () => {
@@ -95,12 +91,6 @@ export function CaseLayout() {
   if (!access.ok) return <NoAccess code={c.code} name={access.name} roleName={access.roleName} />
 
   const priority = PRIORITY_META[c.priority]
-  const status = STATUS_META[c.status]
-
-  const setStatus = async (next: CaseStatus) => {
-    await db.cases.update(c.id, { status: next, updatedAt: new Date().toISOString() })
-    toast.success('Status updated', `${c.code} is now ${STATUS_META[next].label.toLowerCase()}.`)
-  }
 
   return (
     <div className="flex h-full flex-col">
@@ -129,44 +119,6 @@ export function CaseLayout() {
             <h1 className="text-[19px] font-semibold leading-tight tracking-tight text-ink">
               <span className="text-ink-3 tnum">{c.code}</span> {c.title}
             </h1>
-
-            <div className="mt-2.5 flex flex-wrap items-center gap-x-5 gap-y-2">
-              <Badge color={priority.color} size="sm">
-                <Sparkles size={10} />
-                {priority.label}
-              </Badge>
-
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] text-ink-4">Assigned To</span>
-                <Avatar src={assignee?.avatar} name={assignee?.name ?? '—'} size={20} />
-                <span className="text-[12px] text-ink-2">{assignee?.name}</span>
-              </div>
-
-              <div className="flex items-center gap-2.5">
-                <span className="text-[11px] text-ink-4">Progress</span>
-                <Progress value={c.progress} className="w-[120px]" color={priority.color} />
-                <span className="text-[11.5px] font-medium text-ink-2 tnum">{c.progress}%</span>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] text-ink-4">Status</span>
-                <div className="w-[122px]">
-                  <Select
-                    value={c.status}
-                    onChange={(e) => setStatus(e.target.value as CaseStatus)}
-                    className="h-7 text-[12px]"
-                    style={{ color: status.color }}
-                    options={[
-                      { value: 'active', label: 'Active' },
-                      { value: 'pending', label: 'Pending' },
-                      { value: 'review', label: 'In Review' },
-                      { value: 'closed', label: 'Closed' },
-                      { value: 'archived', label: 'Archived' },
-                    ]}
-                  />
-                </div>
-              </div>
-            </div>
           </div>
 
           <IconButton label="Case actions" className="mt-1">

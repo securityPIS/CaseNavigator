@@ -397,18 +397,39 @@ function CaseTable({ cases, users }: { cases: Case[]; users: { id: string; name:
 
 /* -------------------------------------------------------------- New case */
 
+const JURISDICTIONS = [
+  'Internal — Corporate Ethics',
+  'Internal — Legal Hold',
+  'Internal — IT Security',
+  'Regional — Law Enforcement Liaison',
+]
+
 function NewCaseModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [title, setTitle] = useState('')
   const [summary, setSummary] = useState('')
   const [priority, setPriority] = useState<CasePriority>('medium')
+  const [status, setStatus] = useState<CaseStatus>('pending')
   const [caseType, setCaseType] = useState('Financial Misconduct')
+  const [jurisdiction, setJurisdiction] = useState(JURISDICTIONS[0])
+  const [assigneeId, setAssigneeId] = useState('u-jason')
+  const [dueDate, setDueDate] = useState('')
+  const [tags, setTags] = useState('')
   const [saving, setSaving] = useState(false)
   const navigate = useNavigate()
+
+  const users = useLiveQuery(() => db.users.toArray(), [], [])
+  const activeUsers = users.filter((u) => u.active)
 
   const reset = () => {
     setTitle('')
     setSummary('')
     setPriority('medium')
+    setStatus('pending')
+    setCaseType('Financial Misconduct')
+    setJurisdiction(JURISDICTIONS[0])
+    setAssigneeId('u-jason')
+    setDueDate('')
+    setTags('')
   }
 
   const create = async () => {
@@ -420,6 +441,7 @@ function NewCaseModal({ open, onClose }: { open: boolean; onClose: () => void })
       const id = uid('case')
       const code = `${settings?.caseCodePrefix ?? 'CN'}-${new Date().getFullYear()}-${String(count + 1).padStart(3, '0')}`
       const now = new Date().toISOString()
+      const tagList = tags.split(',').map((t) => t.trim()).filter(Boolean)
 
       await db.cases.add({
         id,
@@ -427,20 +449,21 @@ function NewCaseModal({ open, onClose }: { open: boolean; onClose: () => void })
         title: title.trim(),
         summary: summary.trim() || 'No summary recorded yet.',
         priority,
-        status: 'pending',
+        status,
         progress: 0,
-        assigneeId: 'u-jason',
-        teamIds: ['u-jason'],
-        tags: [],
+        assigneeId,
+        teamIds: [assigneeId],
+        tags: tagList,
         openedAt: now,
+        dueAt: dueDate ? new Date(dueDate).toISOString() : undefined,
         updatedAt: now,
         caseType,
-        jurisdiction: 'Internal — Corporate Ethics',
+        jurisdiction,
       })
       await db.activities.add({
         id: uid('ac'),
         caseId: id,
-        actorId: 'u-jason',
+        actorId: assigneeId,
         verb: 'opened',
         object: code,
         at: now,
@@ -505,6 +528,22 @@ function NewCaseModal({ open, onClose }: { open: boolean; onClose: () => void })
               ]}
             />
           </Field>
+          <Field label="Status">
+            <Select
+              value={status}
+              onChange={(e) => setStatus(e.target.value as CaseStatus)}
+              options={[
+                { value: 'active', label: 'Active' },
+                { value: 'pending', label: 'Pending' },
+                { value: 'review', label: 'In Review' },
+                { value: 'closed', label: 'Closed' },
+                { value: 'archived', label: 'Archived' },
+              ]}
+            />
+          </Field>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
           <Field label="Case type">
             <Select
               value={caseType}
@@ -518,7 +557,35 @@ function NewCaseModal({ open, onClose }: { open: boolean; onClose: () => void })
               ]}
             />
           </Field>
+          <Field label="Jurisdiction">
+            <Select
+              value={jurisdiction}
+              onChange={(e) => setJurisdiction(e.target.value)}
+              options={JURISDICTIONS.map((j) => ({ value: j, label: j }))}
+            />
+          </Field>
         </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Investigator">
+            <Select
+              value={assigneeId}
+              onChange={(e) => setAssigneeId(e.target.value)}
+              options={activeUsers.map((u) => ({ value: u.id, label: u.name }))}
+            />
+          </Field>
+          <Field label="Due date">
+            <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+          </Field>
+        </div>
+
+        <Field label="Tags" hint="Comma-separated, e.g. procurement, vendor, FY2024.">
+          <Input
+            placeholder="procurement, vendor, FY2024"
+            value={tags}
+            onChange={(e) => setTags(e.target.value)}
+          />
+        </Field>
       </div>
     </Modal>
   )
