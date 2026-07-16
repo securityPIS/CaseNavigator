@@ -47,7 +47,7 @@ function LinkEdgeImpl({
     targetY,
     sourcePosition,
     targetPosition,
-    curvature: 0.22,
+    curvature: 0.14,
   })
 
   const kind = data?.kind ?? 'associate'
@@ -58,8 +58,10 @@ function LinkEdgeImpl({
   const color = EDGE_COLORS[kind]
 
   const active = selected || highlighted
-  const width = 1 + strength * 1.6 + (active ? 1.1 : 0)
-  const opacity = dimmed ? 0.07 : active ? 0.95 : 0.34 + strength * 0.3
+  // Reads as pinned yarn: thicker, round-capped, with a soft drop shadow so
+  // the string sits above the corkboard rather than being etched into it.
+  const width = 1.8 + strength * 2.2 + (active ? 1.4 : 0)
+  const opacity = dimmed ? 0.08 : active ? 1 : 0.6 + strength * 0.3
 
   return (
     <>
@@ -69,36 +71,34 @@ function LinkEdgeImpl({
         style={{
           stroke: color,
           strokeWidth: width,
+          strokeLinecap: 'round',
           opacity,
-          strokeDasharray: confirmed ? undefined : '5 5',
-          filter: active ? `drop-shadow(0 0 6px ${withAlpha(color, 0.9)})` : undefined,
+          strokeDasharray: confirmed ? undefined : '2 7',
+          filter: active
+            ? `drop-shadow(0 1px 1.5px rgb(0 0 0 / 0.45)) drop-shadow(0 0 6px ${withAlpha(color, 0.85)})`
+            : 'drop-shadow(0 1.5px 1.5px rgb(0 0 0 / 0.4))',
           transition: 'opacity 0.3s var(--ease-out-quint), stroke-width 0.2s var(--ease-out-quint)',
         }}
       />
-
-      {/* Travelling particle — evidence flowing along a confirmed link. */}
-      {confirmed && !dimmed && (
-        <circle r={active ? 2.6 : 1.9} fill={color} opacity={active ? 1 : 0.75}>
-          <animateMotion dur={`${3.6 - strength * 1.4}s`} repeatCount="indefinite" path={path} />
-        </circle>
-      )}
 
       {active && data?.label && (
         <EdgeLabelRenderer>
           <div
             style={{
               position: 'absolute',
-              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px) rotate(-2deg)`,
               pointerEvents: 'none',
             }}
             className="nodrag nopan animate-scale-in"
           >
+            {/* A little paper note tacked to the string. */}
             <span
-              className="rounded-full border px-2 py-0.5 text-[9.5px] font-medium whitespace-nowrap backdrop-blur-md"
+              className="whitespace-nowrap rounded-[3px] border px-2 py-0.5 text-[10px] font-semibold shadow-md"
               style={{
-                color,
-                backgroundColor: 'rgb(6 11 24 / 0.92)',
-                borderColor: withAlpha(color, 0.5),
+                color: '#2a2114',
+                backgroundColor: '#fdf9ee',
+                borderColor: withAlpha(color, 0.55),
+                borderLeft: `3px solid ${color}`,
               }}
             >
               {data.label}

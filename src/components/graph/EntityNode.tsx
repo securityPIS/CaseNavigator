@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useMemo } from 'react'
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react'
 import {
   Banknote,
@@ -13,7 +13,7 @@ import {
   UserCheck,
 } from 'lucide-react'
 import type { EntityKind, GraphNode } from '@/domain/types'
-import { ENTITY_COLORS, withAlpha } from '@/lib/utils'
+import { cn, ENTITY_COLORS, ENTITY_LABELS, withAlpha } from '@/lib/utils'
 
 export const ENTITY_ICONS: Record<EntityKind, typeof User> = {
   person: User,
@@ -32,128 +32,113 @@ export type EntityNodeData = {
   entity: GraphNode
   dimmed: boolean
   highlighted: boolean
+  /** Resolved by the board — an uploaded evidence image or the entity avatar. */
+  imageUrl?: string
 }
 
 export type EntityFlowNode = Node<EntityNodeData, 'entity'>
 
-/** Regular hexagon, flat-top, as a CSS clip-path polygon. */
-const HEX_CLIP = 'polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0% 50%)'
+/** Stable small tilt per entity so every pinned card sits a little askew. */
+function tiltFor(id: string): number {
+  let h = 0
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) & 0xffff
+  return ((h % 1000) / 1000) * 7 - 3.5 // −3.5°..+3.5°
+}
 
 /**
- * The focus node renders as a glowing circle with a portrait; every other
- * entity is a hexagon tinted by its kind. That asymmetry is the whole point —
- * you should be able to find the subject of a case in one glance.
+ * An entity as a pinned Polaroid on the investigation board: a push-pin, a
+ * photo (an uploaded image where one exists, otherwise a kind-tinted icon) and
+ * a caption. The case's central entity gets a larger card and a SUBJECT tag so
+ * it still reads as the centre of gravity at a glance. Hovering straightens and
+ * lifts the card — like picking a photo off the board.
  */
 function EntityNodeImpl({ data, selected }: NodeProps<EntityFlowNode>) {
-  const { entity, dimmed, highlighted } = data
+  const { entity, dimmed, highlighted, imageUrl } = data
   const color = ENTITY_COLORS[entity.kind]
   const Icon = ENTITY_ICONS[entity.kind]
 
-  const opacity = dimmed ? 0.22 : 1
+  const isFocus = !!entity.isFocus
   const active = selected || highlighted
+  const opacity = dimmed ? 0.28 : 1
+  const tilt = useMemo(() => tiltFor(entity.id), [entity.id])
 
-  if (entity.isFocus) {
-    return (
-      <div
-        className="group relative flex flex-col items-center transition-opacity duration-300"
-        style={{ opacity }}
-      >
-        <Handle type="target" position={Position.Top} />
-        <Handle type="source" position={Position.Bottom} />
-
-        {/* Pulse rings — the case's centre of gravity. */}
-        <span
-          className="animate-pulse-ring pointer-events-none absolute left-1/2 top-[62px] size-[130px] -translate-x-1/2 -translate-y-1/2 rounded-full border-2"
-          style={{ borderColor: withAlpha(color, 0.55) }}
-        />
-        <span
-          className="animate-pulse-ring pointer-events-none absolute left-1/2 top-[62px] size-[130px] -translate-x-1/2 -translate-y-1/2 rounded-full border-2"
-          style={{ borderColor: withAlpha(color, 0.4), animationDelay: '1.2s' }}
-        />
-
-        <div
-          className="relative size-[124px] rounded-full p-[3px] transition-transform duration-250 ease-[var(--ease-spring)] group-hover:scale-[1.04]"
-          style={{
-            background: `conic-gradient(from 180deg, ${color}, ${withAlpha(color, 0.25)}, ${color})`,
-            boxShadow: `0 0 ${active ? 54 : 34}px ${withAlpha(color, active ? 0.85 : 0.55)}`,
-          }}
-        >
-          <div className="size-full overflow-hidden rounded-full bg-surface ring-2 ring-void/80">
-            {entity.avatar ? (
-              <img src={entity.avatar} alt="" className="size-full object-cover" draggable={false} />
-            ) : (
-              <span className="flex size-full items-center justify-center" style={{ color }}>
-                <Icon size={44} />
-              </span>
-            )}
-          </div>
-        </div>
-
-        <div className="mt-2.5 max-w-[150px] text-center">
-          <p className="truncate text-[13px] font-semibold leading-tight text-ink drop-shadow-[0_1px_6px_rgba(0,0,0,0.9)]">
-            {entity.label}
-          </p>
-          <p className="mt-0.5 truncate text-[10.5px] leading-tight text-ink-2 drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)]">
-            {entity.sublabel}
-          </p>
-        </div>
-      </div>
-    )
-  }
+  const width = isFocus ? 190 : 158
+  const photoH = isFocus ? 138 : 106
 
   return (
     <div
-      className="group relative transition-opacity duration-300"
-      style={{ opacity }}
+      className="board-node group relative transition-opacity duration-300"
+      style={{ width, opacity }}
     >
       <Handle type="target" position={Position.Top} />
       <Handle type="source" position={Position.Bottom} />
 
       <div
-        className="relative transition-transform duration-250 ease-[var(--ease-spring)] group-hover:scale-[1.07]"
-        style={{ width: 116, height: 104 }}
+        className={cn('board-card', isFocus && 'is-focus', active && 'is-active')}
+        style={
+          {
+            '--tilt': active ? '0deg' : `${tilt}deg`,
+            '--accent': color,
+          } as React.CSSProperties
+        }
       >
-        {/* Border layer — the clip-path fill sits inset on top of it. */}
-        <div
-          className="absolute inset-0 transition-[filter] duration-250"
+        {/* Push-pin, coloured by entity kind so it doubles as the legend. */}
+        <span
+          className="board-pin"
           style={{
-            clipPath: HEX_CLIP,
-            background: active ? color : withAlpha(color, 0.75),
-            filter: `drop-shadow(0 0 ${active ? 18 : 9}px ${withAlpha(color, active ? 0.95 : 0.5)})`,
-          }}
-        />
-        <div
-          className="absolute transition-colors duration-250"
-          style={{
-            inset: 2,
-            clipPath: HEX_CLIP,
-            background: `linear-gradient(155deg, ${withAlpha(color, active ? 0.3 : 0.16)}, rgb(8 13 26 / 0.96) 62%)`,
-            backdropFilter: 'blur(3px)',
+            background: `radial-gradient(circle at 35% 30%, ${withAlpha(color, 0.95)}, ${color} 60%, ${withAlpha(color, 0.7)})`,
           }}
         />
 
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 px-4">
-          <Icon size={21} style={{ color }} className="shrink-0 drop-shadow-[0_0_6px_currentColor]" />
-          <div className="w-full text-center">
-            <p className="truncate text-[10.5px] font-semibold leading-tight text-ink">{entity.label}</p>
-            <p className="mt-px truncate text-[8.5px] leading-tight" style={{ color: withAlpha(color, 0.95) }}>
-              {entity.sublabel}
-            </p>
-          </div>
+        {/* Photo */}
+        <div className="board-photo" style={{ height: photoH }}>
+          {imageUrl ? (
+            <img src={imageUrl} alt="" className="size-full object-cover" draggable={false} />
+          ) : (
+            <div
+              className="flex size-full items-center justify-center"
+              style={{
+                background: `linear-gradient(150deg, ${withAlpha(color, 0.22)}, ${withAlpha(color, 0.06)} 70%, #ece8dc)`,
+              }}
+            >
+              <Icon size={isFocus ? 48 : 34} style={{ color }} strokeWidth={1.6} />
+            </div>
+          )}
+          {/* Kind colour stripe across the top of the photo. */}
+          <span className="absolute inset-x-0 top-0 h-[3px]" style={{ background: color }} />
         </div>
 
-        {/* Risk pip — only where it earns the ink. */}
-        {(entity.risk === 'high' || entity.risk === 'critical') && (
-          <span
-            className="absolute right-[13px] top-[9px] size-2 rounded-full ring-2 ring-void"
-            style={{
-              background: entity.risk === 'critical' ? '#EF4444' : '#F43F5E',
-              boxShadow: `0 0 8px ${entity.risk === 'critical' ? '#EF4444' : '#F43F5E'}`,
-            }}
-            title={entity.risk === 'critical' ? 'Critical risk' : 'High risk'}
-          />
-        )}
+        {/* Caption */}
+        <div className="board-caption">
+          {isFocus && (
+            <span className="board-subject" style={{ background: color }}>
+              SUBJECT
+            </span>
+          )}
+          <p className="board-label line-clamp-2">{entity.label}</p>
+          <p className="board-sub truncate">{entity.sublabel}</p>
+        </div>
       </div>
+
+      {/* Risk pip — only where it earns the ink. */}
+      {(entity.risk === 'high' || entity.risk === 'critical') && (
+        <span
+          className="board-risk"
+          style={{
+            background: entity.risk === 'critical' ? '#EF4444' : '#F43F5E',
+            boxShadow: `0 0 8px ${entity.risk === 'critical' ? '#EF4444' : '#F43F5E'}`,
+          }}
+          title={entity.risk === 'critical' ? 'Critical risk' : 'High risk'}
+        />
+      )}
+
+      {/* Kind label chip, tucked at the card's foot. */}
+      <span
+        className="pointer-events-none absolute -bottom-2 left-1/2 -translate-x-1/2 rounded-full px-2 py-[1px] text-[9px] font-semibold uppercase tracking-wide opacity-0 shadow-md transition-opacity duration-200 group-hover:opacity-100"
+        style={{ background: '#faf7ef', color }}
+      >
+        {ENTITY_LABELS[entity.kind]}
+      </span>
     </div>
   )
 }

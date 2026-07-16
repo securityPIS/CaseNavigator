@@ -286,7 +286,7 @@ export function DashboardPage() {
               <SectionHeading>Quick Access</SectionHeading>
               <div className="grid grid-cols-2 gap-2.5">
                 {[
-                  { to: '/cases/c-014/graph', icon: Shapes, label: 'Node Graph', sub: 'CN-2026-014' },
+                  { to: '/cases/c-014/graph', icon: Shapes, label: 'Board', sub: 'CN-2026-014' },
                   { to: '/cases/c-014/evidence', icon: Boxes, label: 'Evidence', sub: '12 items' },
                   { to: '/cases/c-014/report', icon: FileText, label: 'Report', sub: 'Draft' },
                   { to: '/cases/c-014/recommendation', icon: TrendingUp, label: 'Recommendations', sub: '12 actions' },

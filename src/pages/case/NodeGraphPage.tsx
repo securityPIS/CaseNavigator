@@ -1,9 +1,7 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
-  Background,
-  BackgroundVariant,
   ReactFlow,
   ReactFlowProvider,
   useNodesState,
@@ -29,9 +27,8 @@ import { cn, ENTITY_COLORS, ENTITY_LABELS } from '@/lib/utils'
 import { EntityNode, type EntityFlowNode } from '@/components/graph/EntityNode'
 import { LinkEdge, type LinkFlowEdge } from '@/components/graph/LinkEdge'
 import { NodeDetailPanel } from '@/components/graph/NodeDetailPanel'
-// Three.js is ~117 kB gzipped and purely atmospheric — let the graph paint
-// first and have the starfield fade in behind it.
-const StarField = lazy(() => import('@/components/graph/StarField').then((m) => ({ default: m.StarField })))
+import { BoardBackground } from '@/components/graph/BoardBackground'
+import { useSession } from '@/stores/session'
 import { EmptyState, IconButton, Input, Tooltip } from '@/components/ui/primitives'
 
 const nodeTypes = { entity: EntityNode }
@@ -49,6 +46,7 @@ function GraphCanvas() {
   const { caseId = '' } = useParams()
   const [params, setParams] = useSearchParams()
   const selectedId = params.get('node')
+  const theme = useSession((s) => s.theme)
 
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 1 })
   const [query, setQuery] = useState('')
@@ -62,6 +60,8 @@ function GraphCanvas() {
 
   const entities = useLiveQuery(() => db.nodes.where('caseId').equals(caseId).toArray(), [caseId])
   const links = useLiveQuery(() => db.edges.where('caseId').equals(caseId).toArray(), [caseId], [])
+  /** Uploaded images to pin on each card, keyed by node id. */
+  const nodeImages = useNodeImages(caseId)
 
   const selected = useMemo(
     () => entities?.find((n) => n.id === selectedId) ?? null,
@@ -145,10 +145,12 @@ function GraphCanvas() {
             ...n.data,
             dimmed: searchDim || focusDim,
             highlighted: (searchHits?.has(n.id) ?? false) || hoveredId === n.id,
+            // An uploaded evidence image wins over the generated avatar.
+            imageUrl: nodeImages[n.id] ?? n.data.entity.avatar,
           },
         }
       }),
-    [baseNodes, searchHits, focusMode, neighbourIds, selectedId, hoveredId],
+    [baseNodes, searchHits, focusMode, neighbourIds, selectedId, hoveredId, nodeImages],
   )
 
   const flowEdges = useMemo<LinkFlowEdge[]>(() => {
@@ -239,8 +241,8 @@ function GraphCanvas() {
     return (
       <EmptyState
         icon={<Shapes size={22} />}
-        title="No entities yet"
-        description="This case has no graph entities. Add people, organisations, documents and transactions to start mapping the relationships."
+        title="Board is empty"
+        description="This case has no entities pinned yet. Add people, organisations, documents and transactions to start mapping the relationships on the board."
       />
     )
   }
@@ -249,10 +251,8 @@ function GraphCanvas() {
     <div ref={wrapRef} className="relative flex h-full gap-3 p-3">
       {/* Canvas */}
       <div className="relative min-w-0 flex-1 overflow-hidden rounded-[var(--radius-card)] border border-line ring-1 ring-tint/4">
-        {/* No fallback: the container's CSS gradient is the resting state. */}
-        <Suspense fallback={null}>
-          <StarField viewport={viewport} />
-        </Suspense>
+        {/* Corkboard surface — light tan in light mode, dark cork in dark. */}
+        <BoardBackground theme={theme} />
 
         <ReactFlow<EntityFlowNode, LinkFlowEdge>
           nodes={flowNodes}
@@ -275,9 +275,7 @@ function GraphCanvas() {
           elementsSelectable
           className="relative z-1"
           defaultEdgeOptions={{ type: 'link' }}
-        >
-          <Background variant={BackgroundVariant.Dots} gap={30} size={1} color="#1E3A5F" />
-        </ReactFlow>
+        />
 
         {/* Left toolbar */}
         <div className="absolute left-3 top-3 z-10 flex flex-col gap-1.5">
@@ -440,5 +438,62 @@ function GraphCanvas() {
       )}
     </div>
   )
+}
+
+/**
+ * Resolves an uploaded image to pin on each entity's card. An entity picks up
+ * the first image-kind evidence linked to it that carries a stored blob, turned
+ * into an object URL. Entities with no uploaded image fall back to their avatar
+ * (handled by the caller). Object URLs are revoked when the set changes.
+ */
+function useNodeImages(caseId: string): Record<string, string> {
+  const evidence = useLiveQuery(
+    () => db.evidence.where('caseId').equals(caseId).toArray(),
+    [caseId],
+    [],
+  )
+
+  // node id → blob id of the first uploaded image linked to that node.
+  const nodeBlob = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const e of evidence) {
+      if (!e.blobId) continue
+      const isImage = e.kind === 'image' || (e.mime?.startsWith('image/') ?? false)
+      if (!isImage) continue
+      for (const nid of e.linkedNodeIds) if (!(nid in map)) map[nid] = e.blobId
+    }
+    return map
+  }, [evidence])
+
+  const [urls, setUrls] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    let cancelled = false
+    const created: string[] = []
+    const out: Record<string, string> = {}
+
+    Promise.all(
+      Object.entries(nodeBlob).map(async ([nid, bid]) => {
+        const rec = await db.blobs.get(bid)
+        if (cancelled || !rec) return
+        const url = URL.createObjectURL(rec.data)
+        created.push(url)
+        out[nid] = url
+      }),
+    ).then(() => {
+      if (cancelled) {
+        created.forEach(URL.revokeObjectURL)
+      } else {
+        setUrls(out)
+      }
+    })
+
+    return () => {
+      cancelled = true
+      created.forEach(URL.revokeObjectURL)
+    }
+  }, [nodeBlob])
+
+  return urls
 }
 

@@ -529,6 +529,113 @@ html[data-theme='light'] .case-header::before {
   z-index: 10 !important;
 }
 
+/* ----------------------- Investigation board -----------------------
+   Entities render as pinned Polaroid-style photo cards on a corkboard.
+   Cards are cream paper in both themes, so the labels stay dark-on-light
+   and readable whether the app is in light or dark mode. Rotation and the
+   pick-up-on-hover live here in CSS; the tilt angle arrives per-node as
+   --tilt so each card sits at its own slightly askew angle. */
+.board-node {
+  cursor: pointer;
+}
+.board-card {
+  --tilt: 0deg;
+  --accent: #3b82f6;
+  position: relative;
+  background: #faf7ef;
+  border-radius: 5px;
+  padding: 9px 9px 0;
+  box-shadow:
+    0 12px 26px -10px rgb(0 0 0 / 0.62),
+    0 2px 5px rgb(0 0 0 / 0.3);
+  transform: rotate(var(--tilt));
+  transition:
+    transform 0.28s var(--ease-spring),
+    box-shadow 0.28s var(--ease-out-quint);
+}
+.board-node:hover .board-card {
+  transform: rotate(0deg) translateY(-5px) scale(1.035);
+  box-shadow:
+    0 22px 40px -12px rgb(0 0 0 / 0.64),
+    0 4px 9px rgb(0 0 0 / 0.34);
+}
+.board-card.is-focus {
+  box-shadow:
+    0 16px 34px -10px rgb(0 0 0 / 0.62),
+    0 0 26px -2px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.board-card.is-active {
+  box-shadow:
+    0 18px 36px -12px rgb(0 0 0 / 0.6),
+    0 0 0 2px var(--accent),
+    0 0 24px -2px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.board-photo {
+  position: relative;
+  overflow: hidden;
+  border-radius: 2px;
+  background: #e7e3d7;
+}
+.board-caption {
+  padding: 7px 3px 10px;
+}
+.board-label {
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.18;
+  letter-spacing: -0.01em;
+  color: #17130b;
+}
+.board-sub {
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.25;
+  color: #6d5c43;
+}
+.board-pin {
+  position: absolute;
+  top: -9px;
+  left: 50%;
+  width: 17px;
+  height: 17px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  box-shadow:
+    0 3px 5px rgb(0 0 0 / 0.5),
+    inset 0 -2px 3px rgb(0 0 0 / 0.35);
+  z-index: 2;
+}
+.board-pin::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 4px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.8);
+}
+.board-subject {
+  display: inline-block;
+  margin-bottom: 4px;
+  padding: 1px 7px;
+  border-radius: 3px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #fff;
+}
+.board-risk {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #faf7ef;
+  z-index: 3;
+}
+
 /* ------------------------- Report document body -------------------------
    The report renders on white paper, so it opts out of the app's dark
    palette entirely. Styles are scoped to .report-body and target the raw

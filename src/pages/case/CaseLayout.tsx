@@ -28,7 +28,7 @@ import { toast } from '@/stores/toast'
 
 const TABS = [
   { to: 'registration', label: 'Case Registration', icon: ClipboardList, count: (c: Counts) => c.documents },
-  { to: 'graph', label: 'Node Graph', icon: Shapes, count: (c: Counts) => c.nodes },
+  { to: 'graph', label: 'Board', icon: Shapes, count: (c: Counts) => c.nodes },
   { to: 'gelar', label: 'Gelar Perkara', icon: Gavel, count: (c: Counts) => c.gelar },
   { to: 'sprint', label: 'SPRINT', icon: ScrollText, count: (c: Counts) => c.sprints },
   { to: 'interview', label: 'Interview', icon: MessageSquareQuote, count: (c: Counts) => c.baps },
