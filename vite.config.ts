@@ -50,7 +50,6 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          three: ['three'],
           flow: ['@xyflow/react'],
           vendor: ['react', 'react-dom', 'react-router-dom'],
         },
