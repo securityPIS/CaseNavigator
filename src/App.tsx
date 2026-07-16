@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { Sidebar } from '@/components/layout/Sidebar'
+import { MobileNav } from '@/components/layout/MobileNav'
 import { TopBar } from '@/components/layout/TopBar'
 import { CommandPalette } from '@/components/layout/CommandPalette'
 import { Toaster } from '@/components/ui/Toaster'
@@ -77,6 +78,9 @@ export function App() {
             </Routes>
           </Suspense>
         </main>
+
+        {/* Phone-only bottom navigation; the sidebar handles md and up. */}
+        <MobileNav />
       </div>
 
       <CommandPalette />

@@ -36,7 +36,8 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        'relative flex flex-col shrink-0 h-full border-r border-line-soft',
+        // Hidden on phones — the fixed bottom nav takes over below `md`.
+        'relative hidden md:flex flex-col shrink-0 h-full border-r border-line-soft',
         'bg-gradient-to-b from-surface/90 to-void/95 backdrop-blur-xl',
         'transition-[width] duration-300 ease-[var(--ease-out-quint)]',
         collapsed ? 'w-[68px]' : 'w-[258px]',

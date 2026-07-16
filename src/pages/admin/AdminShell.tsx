@@ -1,5 +1,17 @@
 import type { ReactNode } from 'react'
+import { NavLink } from 'react-router-dom'
+import { Building2, HelpCircle, LayoutTemplate, Users } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import { SectionHeading } from '@/components/ui/primitives'
+
+/** The admin destinations — surfaced here on phones, where the sidebar
+    (which normally carries them) is hidden behind the bottom nav. */
+const ADMIN_NAV = [
+  { to: '/admin/company', label: 'Company', icon: Building2 },
+  { to: '/admin/roles', label: 'Roles', icon: Users },
+  { to: '/admin/templates', label: 'Templates', icon: LayoutTemplate },
+  { to: '/admin/questions', label: 'Questions', icon: HelpCircle },
+]
 
 /** Shared chrome for the four admin pages so they read as one panel. */
 export function AdminShell({
@@ -24,6 +36,27 @@ export function AdminShell({
           </div>
           {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
         </header>
+
+        {/* Admin section switcher — phones only; the sidebar handles md and up. */}
+        <nav className="mb-6 -mx-6 flex gap-2 overflow-x-auto px-6 no-scrollbar md:hidden" aria-label="Admin sections">
+          {ADMIN_NAV.map((it) => (
+            <NavLink
+              key={it.to}
+              to={it.to}
+              className={({ isActive }) =>
+                cn(
+                  'flex shrink-0 items-center gap-2 rounded-lg border px-3 py-2 text-[12.5px] font-medium transition-colors',
+                  isActive
+                    ? 'border-brand/40 bg-brand/12 text-brand-bright'
+                    : 'border-line text-ink-3 hover:text-ink',
+                )
+              }
+            >
+              <it.icon size={15} className="shrink-0" />
+              {it.label}
+            </NavLink>
+          ))}
+        </nav>
 
         {children}
       </div>

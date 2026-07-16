@@ -27,7 +27,25 @@ export function TopBar() {
   }
 
   return (
-    <header className="relative z-40 flex h-[68px] shrink-0 items-center gap-4 border-b border-line-soft bg-void/70 px-5 backdrop-blur-xl">
+    <header className="relative z-40 flex h-[68px] shrink-0 items-center gap-3 border-b border-line-soft bg-void/70 px-4 backdrop-blur-xl sm:gap-4 sm:px-5">
+      {/* Compact brand — the sidebar (which carries the full logo) is hidden on
+          phones, so the top bar isn't left headless. */}
+      <div className="flex shrink-0 items-center gap-2 md:hidden">
+        <svg viewBox="0 0 64 64" className="size-8" fill="none" aria-hidden>
+          <defs>
+            <linearGradient id="tb-g" x1="8" y1="6" x2="56" y2="58" gradientUnits="userSpaceOnUse">
+              <stop stopColor="#60A5FA" />
+              <stop offset="0.55" stopColor="#3B82F6" />
+              <stop offset="1" stopColor="#8B5CF6" />
+            </linearGradient>
+          </defs>
+          <path d="M32 3.5 55.7 17v30L32 60.5 8.3 47V17L32 3.5Z" fill="url(#tb-g)" fillOpacity="0.16" stroke="url(#tb-g)" strokeWidth="2.5" strokeLinejoin="round" />
+          <path d="M22 44V21l20 22V20" stroke="url(#tb-g)" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
+          <circle cx="22" cy="20.5" r="4" fill="#0B1222" stroke="#60A5FA" strokeWidth="2.5" />
+          <circle cx="42" cy="43.5" r="4" fill="#0B1222" stroke="#8B5CF6" strokeWidth="2.5" />
+        </svg>
+      </div>
+
       {/* Search trigger — opens the palette rather than doing inline search,
           so there's exactly one search surface in the app. */}
       <button
@@ -39,8 +57,8 @@ export function TopBar() {
         )}
       >
         <Search size={15} className="shrink-0" />
-        <span className="flex-1 text-left text-[13px]">Search cases, entities, documents, emails…</span>
-        <span className="flex items-center gap-0.5 text-[11px] text-ink-4">
+        <span className="flex-1 truncate text-left text-[13px]">Search cases, entities, documents, emails…</span>
+        <span className="hidden items-center gap-0.5 text-[11px] text-ink-4 sm:flex">
           <kbd className="rounded border border-line-strong bg-surface-2 px-1.5 py-0.5 font-sans">
             {isMac ? '⌘' : 'Ctrl'}
           </kbd>
