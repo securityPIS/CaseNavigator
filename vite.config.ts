@@ -49,6 +49,9 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
+        // Keep the initial app shell light: the graph canvas (React Flow) and
+        // the core vendor libs are heavy and route-specific, so they ride in
+        // their own chunks rather than the entry bundle.
         manualChunks: {
           flow: ['@xyflow/react'],
           vendor: ['react', 'react-dom', 'react-router-dom'],
