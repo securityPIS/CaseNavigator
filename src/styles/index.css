@@ -393,58 +393,23 @@
   );
 }
 
-/* Light mode: a full-colour, layered blue mesh gradient rather than a
-   red-to-white fade. Brand blue leads, a sky and an indigo tone give it depth,
-   and every hue is mixed into white just enough to keep the dark ink readable. */
 html[data-theme='light'] .case-header {
-  border-bottom-color: color-mix(in srgb, var(--color-brand) 26%, var(--color-line));
   background:
-    /* top-left brand bloom */
     radial-gradient(
-      760px 360px at -2% -35%,
-      color-mix(in srgb, var(--color-brand) 46%, #ffffff),
-      transparent 72%
-    ),
-    /* top-right sky bloom */
-    radial-gradient(
-      680px 380px at 102% -45%,
-      color-mix(in srgb, var(--color-entity-person) 42%, #ffffff),
+      720px 280px at 2% -45%,
+      color-mix(in srgb, var(--tone, var(--color-brand)) 10%, transparent),
       transparent 70%
     ),
-    /* lower-centre indigo accent for a mesh feel */
     radial-gradient(
-      820px 460px at 48% 138%,
-      color-mix(in srgb, var(--color-brand-deep) 34%, #ffffff),
-      transparent 66%
+      560px 320px at 100% -70%,
+      color-mix(in srgb, var(--color-brand) 6%, transparent),
+      transparent 68%
     ),
-    /* colourful diagonal base wash — no white or void stop */
-    linear-gradient(
-      130deg,
-      color-mix(in srgb, var(--color-entity-person) 22%, #ffffff) 0%,
-      color-mix(in srgb, var(--color-brand) 19%, #ffffff) 50%,
-      color-mix(in srgb, var(--color-brand-deep) 18%, #ffffff) 100%
-    );
+    linear-gradient(180deg, #ffffff 0%, #fbfdff 40%, var(--color-void) 100%);
 }
 
-/* The console grid reads as light lines over the coloured wash. */
 html[data-theme='light'] .case-header::before {
-  background-image:
-    linear-gradient(color-mix(in srgb, #ffffff 70%, transparent) 1px, transparent 1px),
-    linear-gradient(90deg, color-mix(in srgb, #ffffff 70%, transparent) 1px, transparent 1px);
-  opacity: 0.55;
-}
-
-/* A crisper, fully-coloured blue bottom edge to seat the masthead. */
-html[data-theme='light'] .case-header::after {
-  height: 2px;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    color-mix(in srgb, var(--color-entity-person) 66%, transparent) 22%,
-    color-mix(in srgb, var(--color-brand) 64%, transparent) 55%,
-    color-mix(in srgb, var(--color-brand-deep) 60%, transparent) 82%,
-    transparent
-  );
+  opacity: 0.7;
 }
 
 /* ---------------------------- Animations ---------------------------- */
