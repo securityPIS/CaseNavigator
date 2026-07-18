@@ -25,11 +25,9 @@ import { Field } from '@/pages/CasesPage'
 import { toast } from '@/stores/toast'
 
 const COLUMNS: { id: RecColumn; label: string; color: string; hint: string }[] = [
-  { id: 'backlog', label: 'Backlog', color: '#6A7FA3', hint: 'Captured, not yet proposed' },
-  { id: 'proposed', label: 'Proposed', color: '#38BDF8', hint: 'Awaiting a decision' },
-  { id: 'approved', label: 'Approved', color: '#8B5CF6', hint: 'Cleared to start' },
+  { id: 'open', label: 'Open', color: '#38BDF8', hint: 'Captured, not yet started' },
   { id: 'in_progress', label: 'In Progress', color: '#F59E0B', hint: 'Being worked now' },
-  { id: 'done', label: 'Done', color: '#10B981', hint: 'Complete' },
+  { id: 'closed', label: 'Closed', color: '#10B981', hint: 'Complete' },
 ]
 
 export function RecommendationPage() {
@@ -95,7 +93,7 @@ export function RecommendationPage() {
     }
   }
 
-  const blocking = recs.filter((r) => r.tags.includes('blocking') && r.column !== 'done')
+  const blocking = recs.filter((r) => r.tags.includes('blocking') && r.column !== 'closed')
 
   return (
     <div className="flex h-full flex-col">
@@ -106,7 +104,7 @@ export function RecommendationPage() {
             <h2 className="text-[13.5px] font-semibold text-ink">Recommended Actions</h2>
             <p className="mt-0.5 text-[11px] text-ink-3">
               <span className="tnum">{recs.length}</span> actions ·{' '}
-              <span className="tnum">{recs.filter((r) => r.column === 'done').length}</span> complete
+              <span className="tnum">{recs.filter((r) => r.column === 'closed').length}</span> complete
             </p>
           </div>
 
@@ -120,7 +118,7 @@ export function RecommendationPage() {
             </div>
           )}
 
-          <Button size="sm" variant="primary" icon={<Plus size={13} />} className="ml-auto" onClick={() => setCreating('backlog')}>
+          <Button size="sm" variant="primary" icon={<Plus size={13} />} className="ml-auto" onClick={() => setCreating('open')}>
             New action
           </Button>
         </div>

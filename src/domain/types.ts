@@ -265,7 +265,7 @@ export interface Report {
 
 /* -------------------------------------------------------- Recommendation */
 
-export type RecColumn = 'backlog' | 'proposed' | 'approved' | 'in_progress' | 'done'
+export type RecColumn = 'open' | 'in_progress' | 'closed'
 
 export interface Recommendation {
   id: string
