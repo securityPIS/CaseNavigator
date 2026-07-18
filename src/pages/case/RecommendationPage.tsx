@@ -127,7 +127,7 @@ export function RecommendationPage() {
       {/* Board */}
       <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={onDragStart} onDragEnd={onDragEnd}>
         <div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden p-4">
-          <div className="flex h-full gap-3">
+          <div className="flex h-full justify-center gap-3">
             {COLUMNS.map((col) => (
               <Column
                 key={col.id}
@@ -199,7 +199,7 @@ function Column({
   const { setNodeRef, isOver } = useDroppable({ id: col.id })
 
   return (
-    <div className="flex h-full w-[268px] shrink-0 flex-col">
+    <div className="flex h-full w-[300px] shrink-0 flex-col">
       <div className="mb-2.5 flex items-center gap-2 px-1">
         <span className="size-2 shrink-0 rounded-full" style={{ background: col.color, boxShadow: `0 0 7px ${col.color}` }} />
         <h3 className="text-[12px] font-semibold text-ink">{col.label}</h3>
