@@ -34,6 +34,7 @@ import {
 } from '@/lib/utils'
 import { Badge, Button, EmptyState, IconButton, Input, Select, Textarea, tone } from '@/components/ui/primitives'
 import { Modal } from '@/components/ui/Modal'
+import { BlobPreview } from '@/components/ui/BlobPreview'
 import { ENTITY_ICONS } from '@/components/graph/EntityNode'
 import { Field } from '@/pages/CasesPage'
 import { toast } from '@/stores/toast'
@@ -481,7 +482,7 @@ function EvidenceDetail({
     <Modal
       open
       onClose={onClose}
-      size="lg"
+      size="xl"
       title={item.name}
       description={`${item.ref} · ${meta.label} · collected by ${item.collectedBy}`}
       footer={
@@ -503,123 +504,131 @@ function EvidenceDetail({
         </>
       }
     >
-      <div className="space-y-4">
-        {/* Preview */}
-        <div className="relative flex h-[190px] items-center justify-center overflow-hidden rounded-xl border border-line bg-abyss/50">
-          {preview ? (
-            <img src={preview} alt={item.name} className="size-full object-contain" />
-          ) : (
-            <div className="text-center">
-              <Icon size={34} style={{ color: meta.color }} className="mx-auto opacity-60" />
-              <p className="mt-2.5 text-[11.5px] text-ink-4">
-                {item.blobId ? 'No inline preview for this file type' : 'Recorded item — no file payload'}
-              </p>
-            </div>
-          )}
-          <span className="absolute right-3 top-3">
-            <Badge color={status.color} dot>
-              {status.label}
-            </Badge>
-          </span>
+      {/* Image on the left, held in view while the details on the right scroll. */}
+      <div className="grid gap-5 md:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+        <div className="md:sticky md:top-0 md:self-start">
+          <div className="relative flex h-[260px] items-center justify-center overflow-hidden rounded-xl border border-line bg-abyss/50 md:h-[min(64dvh,560px)]">
+            {preview ? (
+              <img src={preview} alt={item.name} className="size-full object-contain" />
+            ) : item.blobId && item.mime && !item.mime.startsWith('image/') ? (
+              <div className="size-full overflow-auto p-3">
+                <BlobPreview blobId={item.blobId} mime={item.mime} name={item.name} size={item.size} />
+              </div>
+            ) : (
+              <div className="text-center">
+                <Icon size={40} style={{ color: meta.color }} className="mx-auto opacity-60" />
+                <p className="mt-2.5 text-[11.5px] text-ink-4">
+                  {item.blobId ? 'Memuat pratinjau…' : 'Barang bukti tercatat — tanpa berkas'}
+                </p>
+              </div>
+            )}
+            <span className="absolute right-3 top-3">
+              <Badge color={status.color} dot>
+                {status.label}
+              </Badge>
+            </span>
+          </div>
         </div>
 
-        <p className="text-[12.5px] leading-relaxed text-ink-2">{item.description}</p>
+        <div className="min-w-0 space-y-4">
+          <p className="text-[12.5px] leading-relaxed text-ink-2">{item.description}</p>
 
-        {/* Facts */}
-        <dl className="grid gap-2 sm:grid-cols-2">
-          {[
-            ['Reference', item.ref],
-            ['Type', meta.label],
-            ['Collected by', item.collectedBy],
-            ['Collected at', formatDateTime(item.collectedAt)],
-            ['Location', item.location],
-            ['Confidence', item.confidence > 0 ? `${item.confidence}%` : 'Not assessed'],
-            ...(item.size !== undefined ? [['File size', formatBytes(item.size)] as [string, string]] : []),
-            ...(item.mime ? [['MIME type', item.mime] as [string, string]] : []),
-          ].map(([k, v]) => (
-            <div key={k} className="rounded-lg border border-line-soft bg-abyss/35 px-3 py-2">
-              <dt className="text-[10px] uppercase tracking-wide text-ink-4">{k}</dt>
-              <dd className="mt-0.5 break-words text-[12px] text-ink-2">{v}</dd>
-            </div>
-          ))}
-        </dl>
-
-        {/* Status control */}
-        <Field label="Status" hint="Every change is written to the chain of custody below.">
-          <Select
-            value={item.status}
-            onChange={(e) => setStatus(e.target.value as EvidenceStatus)}
-            options={Object.entries(STATUS_META).map(([k, v]) => ({ value: k, label: v.label }))}
-          />
-        </Field>
-
-        {/* Tags */}
-        {item.tags.length > 0 && (
-          <div>
-            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.07em] text-ink-3">Tags</h3>
-            <div className="flex flex-wrap gap-1.5">
-              {item.tags.map((t) => (
-                <span key={t} className="rounded-md border border-line bg-abyss/50 px-2 py-0.5 text-[10.5px] text-ink-3">
-                  {t}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Linked entities */}
-        {linked.length > 0 && (
-          <div>
-            <h3 className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-ink-3">
-              <Link2 size={11} /> Linked entities
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {linked.map((n) => {
-                const color = ENTITY_COLORS[n.kind]
-                const NIcon = ENTITY_ICONS[n.kind]
-                return (
-                  <Link
-                    key={n.id}
-                    to={`/cases/${caseId}/graph?node=${n.id}`}
-                    onClick={onClose}
-                    className="tone flex items-center gap-2 rounded-full border px-2.5 py-1.5 text-[11.5px] transition-transform hover:scale-[1.03]"
-                    style={tone(color)}
-                  >
-                    <NIcon size={12} />
-                    {n.label}
-                  </Link>
-                )
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Custody */}
-        <div>
-          <h3 className="mb-2.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-ink-3">
-            <ShieldAlert size={11} /> Chain of custody
-          </h3>
-          <ol className="relative space-y-3 rounded-xl border border-line-soft bg-abyss/35 p-3.5">
-            <span className="absolute bottom-4 left-[17px] top-4 w-px bg-line" aria-hidden />
-            {item.custody.map((c) => (
-              <li key={c.id} className="relative flex gap-3">
-                <span className="relative z-1 mt-0.5 flex size-[15px] shrink-0 items-center justify-center rounded-full border border-brand/50 bg-void">
-                  <span className="size-1.5 rounded-full bg-brand" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-[11.5px] text-ink-2">
-                    <span className="font-medium text-ink">{c.actor}</span> — {c.action}
-                  </p>
-                  <p className="mt-0.5 text-[10px] text-ink-4 tnum">{formatDateTime(c.at)}</p>
-                  {c.note && (
-                    <p className="mt-1 rounded-md border border-line-soft bg-void/50 px-2 py-1 text-[10.5px] italic text-ink-3">
-                      {c.note}
-                    </p>
-                  )}
-                </div>
-              </li>
+          {/* Facts */}
+          <dl className="grid gap-2 sm:grid-cols-2">
+            {[
+              ['Reference', item.ref],
+              ['Type', meta.label],
+              ['Collected by', item.collectedBy],
+              ['Collected at', formatDateTime(item.collectedAt)],
+              ['Location', item.location],
+              ['Confidence', item.confidence > 0 ? `${item.confidence}%` : 'Not assessed'],
+              ...(item.size !== undefined ? [['File size', formatBytes(item.size)] as [string, string]] : []),
+              ...(item.mime ? [['MIME type', item.mime] as [string, string]] : []),
+            ].map(([k, v]) => (
+              <div key={k} className="rounded-lg border border-line-soft bg-abyss/35 px-3 py-2">
+                <dt className="text-[10px] uppercase tracking-wide text-ink-4">{k}</dt>
+                <dd className="mt-0.5 break-words text-[12px] text-ink-2">{v}</dd>
+              </div>
             ))}
-          </ol>
+          </dl>
+
+          {/* Status control */}
+          <Field label="Status" hint="Every change is written to the chain of custody below.">
+            <Select
+              value={item.status}
+              onChange={(e) => setStatus(e.target.value as EvidenceStatus)}
+              options={Object.entries(STATUS_META).map(([k, v]) => ({ value: k, label: v.label }))}
+            />
+          </Field>
+
+          {/* Tags */}
+          {item.tags.length > 0 && (
+            <div>
+              <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.07em] text-ink-3">Tags</h3>
+              <div className="flex flex-wrap gap-1.5">
+                {item.tags.map((t) => (
+                  <span key={t} className="rounded-md border border-line bg-abyss/50 px-2 py-0.5 text-[10.5px] text-ink-3">
+                    {t}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Linked entities */}
+          {linked.length > 0 && (
+            <div>
+              <h3 className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-ink-3">
+                <Link2 size={11} /> Linked entities
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                {linked.map((n) => {
+                  const color = ENTITY_COLORS[n.kind]
+                  const NIcon = ENTITY_ICONS[n.kind]
+                  return (
+                    <Link
+                      key={n.id}
+                      to={`/cases/${caseId}/graph?node=${n.id}`}
+                      onClick={onClose}
+                      className="tone flex items-center gap-2 rounded-full border px-2.5 py-1.5 text-[11.5px] transition-transform hover:scale-[1.03]"
+                      style={tone(color)}
+                    >
+                      <NIcon size={12} />
+                      {n.label}
+                    </Link>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Custody */}
+          <div>
+            <h3 className="mb-2.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-ink-3">
+              <ShieldAlert size={11} /> Chain of custody
+            </h3>
+            <ol className="relative space-y-3 rounded-xl border border-line-soft bg-abyss/35 p-3.5">
+              <span className="absolute bottom-4 left-[17px] top-4 w-px bg-line" aria-hidden />
+              {item.custody.map((c) => (
+                <li key={c.id} className="relative flex gap-3">
+                  <span className="relative z-1 mt-0.5 flex size-[15px] shrink-0 items-center justify-center rounded-full border border-brand/50 bg-void">
+                    <span className="size-1.5 rounded-full bg-brand" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11.5px] text-ink-2">
+                      <span className="font-medium text-ink">{c.actor}</span> — {c.action}
+                    </p>
+                    <p className="mt-0.5 text-[10px] text-ink-4 tnum">{formatDateTime(c.at)}</p>
+                    {c.note && (
+                      <p className="mt-1 rounded-md border border-line-soft bg-void/50 px-2 py-1 text-[10.5px] italic text-ink-3">
+                        {c.note}
+                      </p>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </div>
         </div>
       </div>
     </Modal>
