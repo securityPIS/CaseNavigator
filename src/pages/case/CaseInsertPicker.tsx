@@ -1,11 +1,34 @@
 import { useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { Boxes, ClipboardList, Gavel, Image as ImageIcon, MessageSquareQuote, Plus, Search } from 'lucide-react'
+import {
+  Banknote,
+  Boxes,
+  ClipboardList,
+  FileAudio,
+  FileText,
+  FileVideo,
+  Gavel,
+  HardDrive,
+  Image as ImageIcon,
+  MessageSquareQuote,
+  Package,
+  Plus,
+  Search,
+} from 'lucide-react'
 import { db } from '@/domain/db'
 import { sprintState, SPRINT_STATE_META } from '@/domain/access'
-import type { BapStatus, EvidenceStatus, GelarStatus, IntervieweeKind, ReportSource, SprintPosition } from '@/domain/types'
+import type {
+  BapStatus,
+  EvidenceKind,
+  EvidenceStatus,
+  GelarStatus,
+  IntervieweeKind,
+  ReportSource,
+  SprintPosition,
+} from '@/domain/types'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
-import { Button, EmptyState, Input } from '@/components/ui/primitives'
+import { Badge, Button, EmptyState, Input, tone } from '@/components/ui/primitives'
+import { useBlobPreview } from '@/components/ui/BlobPreview'
 import { Modal } from '@/components/ui/Modal'
 
 /**
@@ -29,6 +52,8 @@ export interface InsertBlock {
   body: string
   /** An image that goes on the slide beside the text. */
   imageBlobId?: string
+  /** Evidence only — drives the small card in the picker. */
+  evidence?: { kind: EvidenceKind; status: EvidenceStatus; ref: string; name: string }
 }
 
 const SOURCES: { id: InsertSource; label: string; icon: typeof Boxes }[] = [
@@ -61,6 +86,21 @@ const EVIDENCE_LABEL: Record<EvidenceStatus, string> = {
   analyzing: 'Analyzing',
   verified: 'Verified',
   rejected: 'Out of scope',
+}
+const EVIDENCE_COLOR: Record<EvidenceStatus, string> = {
+  collected: '#38BDF8',
+  analyzing: '#F59E0B',
+  verified: '#10B981',
+  rejected: '#6A7FA3',
+}
+const EVIDENCE_KIND: Record<EvidenceKind, { icon: typeof FileText; color: string }> = {
+  document: { icon: FileText, color: '#3B82F6' },
+  image: { icon: ImageIcon, color: '#A855F7' },
+  video: { icon: FileVideo, color: '#F43F5E' },
+  audio: { icon: FileAudio, color: '#22D3EE' },
+  physical: { icon: Package, color: '#F59E0B' },
+  digital: { icon: HardDrive, color: '#10B981' },
+  financial: { icon: Banknote, color: '#EAB308' },
 }
 
 const lines = (...xs: (string | false | undefined | null)[]) => xs.filter(Boolean).join('\n')
@@ -219,6 +259,7 @@ function useInsertBlocks(caseId: string): InsertBlock[] | undefined {
           e.location && `Lokasi: ${e.location}`,
         ),
         imageBlobId: e.mime?.startsWith('image/') ? e.blobId : undefined,
+        evidence: { kind: e.kind, status: e.status, ref: e.ref, name: e.name },
       })
     }
 
@@ -286,6 +327,12 @@ export function CaseInsertPicker({
               title="Tidak ada data"
               description={query ? 'Tidak ada yang cocok dengan pencarian.' : 'Bagian ini belum berisi data pada perkara ini.'}
             />
+          ) : source === 'evidence' ? (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+              {shown.map((b) => (
+                <EvidenceCard key={b.id} block={b} onInsert={() => onInsert(b)} />
+              ))}
+            </div>
           ) : (
             shown.map((b) => (
               <div key={b.id} className="flex items-start gap-3 rounded-lg border border-line-soft bg-abyss/30 px-3 py-2.5">
@@ -310,5 +357,46 @@ export function CaseInsertPicker({
         </div>
       </div>
     </Modal>
+  )
+}
+
+/** A piece of evidence as a small card: its picture (or type icon), reference,
+    name and status. Clicking the card puts it on the slide. */
+function EvidenceCard({ block, onInsert }: { block: InsertBlock; onInsert: () => void }) {
+  const ev = block.evidence!
+  const kind = EVIDENCE_KIND[ev.kind]
+  const { url } = useBlobPreview(block.imageBlobId, block.imageBlobId ? 'image/*' : undefined)
+  const color = EVIDENCE_COLOR[ev.status]
+
+  return (
+    <button
+      onClick={onInsert}
+      title={`Sisipkan ${ev.ref} ke slide`}
+      className="group flex flex-col overflow-hidden rounded-lg border border-line-soft bg-abyss/30 text-left transition-all hover:-translate-y-0.5 hover:border-brand/50"
+    >
+      <span className="relative flex aspect-[4/3] items-center justify-center overflow-hidden border-b border-line-soft bg-abyss/50">
+        {url ? (
+          <img src={url} alt="" className="size-full object-cover" />
+        ) : (
+          <span className="tone flex size-9 items-center justify-center rounded-lg border" style={tone(kind.color)}>
+            <kind.icon size={17} />
+          </span>
+        )}
+        <span className="absolute inset-0 flex items-center justify-center bg-void/60 opacity-0 transition-opacity group-hover:opacity-100">
+          <span className="flex items-center gap-1 rounded-md bg-brand px-2 py-1 text-[10.5px] font-medium text-white">
+            <Plus size={11} /> Sisipkan
+          </span>
+        </span>
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col gap-1 p-2">
+        <span className="text-[10px] text-ink-4 tnum">{ev.ref}</span>
+        <span className="line-clamp-2 text-[11.5px] font-medium leading-snug text-ink">{ev.name}</span>
+        <span className="mt-auto">
+          <Badge color={color} size="sm" dot>
+            {EVIDENCE_LABEL[ev.status]}
+          </Badge>
+        </span>
+      </span>
+    </button>
   )
 }
