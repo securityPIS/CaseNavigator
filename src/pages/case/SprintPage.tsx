@@ -4,18 +4,21 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import {
   Ban,
   Download,
+  FilePen,
   FileSignature,
   KeyRound,
   Paperclip,
-  Plus,
+  Printer,
   ScrollText,
   ShieldCheck,
+  Trash2,
   Upload,
   UserPlus,
   X,
 } from 'lucide-react'
 import { db } from '@/domain/db'
 import { SPRINT_STATE_META, can, sprintState } from '@/domain/access'
+import { downloadLetterHtml, printLetterHtml, renderSprintLetterHtml, roleOf } from '@/domain/sprintLetter'
 import type { Role, Sprint, SprintPosition, User } from '@/domain/types'
 import { cn, formatBytes, formatDate, uid } from '@/lib/utils'
 import { Avatar, Badge, Button, Card, EmptyState, IconButton, Input, Select, Textarea, tone, Tooltip } from '@/components/ui/primitives'
@@ -24,6 +27,7 @@ import { Field } from '@/pages/CasesPage'
 import { PageSpinner } from '@/components/ui/PageSpinner'
 import { useSession } from '@/stores/session'
 import { toast } from '@/stores/toast'
+import { SprintLetterModal } from './SprintLetterModal'
 
 const POSITION_META: Record<SprintPosition, { label: string; color: string }> = {
   ketua: { label: 'Ketua Tim', color: '#3B82F6' },
@@ -48,6 +52,7 @@ export function SprintPage() {
   const manage = can(myRole, 'sprint.manage')
 
   const [issuing, setIssuing] = useState(false)
+  const [drafting, setDrafting] = useState<Sprint | 'new' | null>(null)
 
   if (!sprints) return <PageSpinner />
 
@@ -63,9 +68,14 @@ export function SprintPage() {
             </p>
           </div>
           {manage && (
-            <Button variant="primary" icon={<Plus size={13} />} onClick={() => setIssuing(true)}>
-              Issue SPRINT
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" icon={<Upload size={13} />} onClick={() => setIssuing(true)}>
+                Upload signed order
+              </Button>
+              <Button variant="primary" icon={<FilePen size={13} />} onClick={() => setDrafting('new')}>
+                Draft from template
+              </Button>
+            </div>
           )}
         </header>
 
@@ -83,8 +93,8 @@ export function SprintPage() {
               }
               action={
                 manage ? (
-                  <Button variant="primary" icon={<Plus size={14} />} onClick={() => setIssuing(true)}>
-                    Issue SPRINT
+                  <Button variant="primary" icon={<FilePen size={14} />} onClick={() => setDrafting('new')}>
+                    Draft from template
                   </Button>
                 ) : undefined
               }
@@ -93,13 +103,22 @@ export function SprintPage() {
         ) : (
           <div className="space-y-4">
             {sprints.map((s) => (
-              <SprintCard key={s.id} sprint={s} users={users} manage={manage} />
+              <SprintCard key={s.id} sprint={s} users={users} manage={manage} onEditDraft={() => setDrafting(s)} />
             ))}
           </div>
         )}
       </div>
 
       {issuing && <IssueSprintModal caseId={caseId} users={users} roles={roles} onClose={() => setIssuing(false)} />}
+      {drafting && (
+        <SprintLetterModal
+          caseId={caseId}
+          sprint={drafting === 'new' ? undefined : drafting}
+          users={users}
+          roles={roles}
+          onClose={() => setDrafting(null)}
+        />
+      )}
     </div>
   )
 }
@@ -170,18 +189,38 @@ function AccessSummary({ caseSprints, users, roles }: { caseSprints: Sprint[]; u
 
 /* ----------------------------------------------------------- Sprint card */
 
-function SprintCard({ sprint, users, manage }: { sprint: Sprint; users: User[]; manage: boolean }) {
+function SprintCard({
+  sprint,
+  users,
+  manage,
+  onEditDraft,
+}: {
+  sprint: Sprint
+  users: User[]
+  manage: boolean
+  onEditDraft: () => void
+}) {
   const [adding, setAdding] = useState(false)
+  const settings = useLiveQuery(() => db.settings.get('settings'), [])
   const state = sprintState(sprint)
   const meta = SPRINT_STATE_META[state]
+  const isDraft = state === 'draft'
   const editable = manage && (state === 'active' || state === 'scheduled')
 
   const members = [...sprint.members].sort(
     (a, b) => POSITION_ORDER.indexOf(a.position) - POSITION_ORDER.indexOf(b.position),
   )
+  // People on the letter who hold no access themselves (Pembina, outside
+  // advisors) — shown so the card matches the printed attachment.
+  const listedOnly = (sprint.letter?.team ?? []).filter((e) => !e.userId || !roleOf(sprint.letter!.body, e.roleId)?.access)
+
+  const letterHtml = () =>
+    sprint.letter
+      ? renderSprintLetterHtml(sprint.letter, { logoDataUrl: settings?.logoDataUrl, companyName: settings?.legalName })
+      : ''
 
   const download = async () => {
-    const rec = await db.blobs.get(sprint.docBlobId)
+    const rec = sprint.docBlobId ? await db.blobs.get(sprint.docBlobId) : undefined
     if (!rec) {
       toast.error('Document missing', 'The uploaded order could not be found in this browser.')
       return
@@ -189,7 +228,7 @@ function SprintCard({ sprint, users, manage }: { sprint: Sprint; users: User[]; 
     const url = URL.createObjectURL(rec.data)
     const a = document.createElement('a')
     a.href = url
-    a.download = sprint.docName
+    a.download = sprint.docName ?? `${sprint.number}`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -206,13 +245,18 @@ function SprintCard({ sprint, users, manage }: { sprint: Sprint; users: User[]; 
     toast.success('SPRINT revoked', 'Its investigators lose access to this case immediately.')
   }
 
+  const deleteDraft = async () => {
+    await db.sprints.delete(sprint.id)
+    toast.success('Draft deleted')
+  }
+
   return (
     <Card className="overflow-hidden">
       <div className="flex flex-wrap items-start justify-between gap-4 border-b border-line-soft p-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="tone flex size-8 shrink-0 items-center justify-center rounded-lg border" style={tone(meta.color)}>
-              <FileSignature size={15} />
+              {isDraft ? <FilePen size={15} /> : <FileSignature size={15} />}
             </span>
             <h3 className="text-[14px] font-semibold text-ink tnum">{sprint.number}</h3>
             <Badge color={meta.color} size="sm" dot>
@@ -221,18 +265,43 @@ function SprintCard({ sprint, users, manage }: { sprint: Sprint; users: User[]; 
           </div>
           <p className="mt-2 max-w-[640px] text-[12px] leading-relaxed text-ink-2">{sprint.subject}</p>
           <p className="mt-1.5 text-[11px] text-ink-4">
-            Issued by <span className="text-ink-3">{sprint.issuedBy}</span> · {formatDate(sprint.issuedAt)} · valid{' '}
-            {formatDate(sprint.validFrom)}
+            {isDraft ? 'To be signed by' : 'Issued by'} <span className="text-ink-3">{sprint.issuedBy}</span> ·{' '}
+            {formatDate(sprint.issuedAt)} · valid {formatDate(sprint.validFrom)}
             {sprint.validUntil ? ` – ${formatDate(sprint.validUntil)}` : ' until revoked'}
           </p>
+          {isDraft && (
+            <p className="mt-2 max-w-[640px] text-[11px] leading-relaxed text-ink-3">
+              Not in force. Print the letter for signature, then open the draft to attach the signed scan and issue it —
+              until then nobody gains access through it.
+            </p>
+          )}
           {sprint.notes && <p className="mt-2 text-[11px] italic leading-relaxed text-ink-4">{sprint.notes}</p>}
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
-          <Button size="sm" variant="outline" icon={<Download size={12} />} onClick={download}>
-            Surat Perintah
-          </Button>
-          {manage && !sprint.revoked && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {sprint.letter && (
+            <Button size="sm" variant="outline" icon={<Printer size={12} />} onClick={() => printLetterHtml(letterHtml())}>
+              Print letter
+            </Button>
+          )}
+          {isDraft && manage && (
+            <Button size="sm" variant="primary" icon={<FilePen size={12} />} onClick={onEditDraft}>
+              Continue draft
+            </Button>
+          )}
+          {sprint.docBlobId && (
+            <Button size="sm" variant="outline" icon={<Download size={12} />} onClick={download}>
+              Surat Perintah
+            </Button>
+          )}
+          {manage && isDraft && (
+            <Tooltip label="Delete this draft">
+              <IconButton label="Delete draft" size={30} className="hover:text-danger" onClick={deleteDraft}>
+                <Trash2 size={14} />
+              </IconButton>
+            </Tooltip>
+          )}
+          {manage && !sprint.revoked && !isDraft && (
             <Tooltip label="Revoke this order">
               <IconButton label="Revoke" size={30} className="hover:text-danger" onClick={revoke}>
                 <Ban size={14} />
@@ -246,7 +315,7 @@ function SprintCard({ sprint, users, manage }: { sprint: Sprint; users: User[]; 
         <div>
           <div className="mb-2.5 flex items-center justify-between">
             <p className="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-ink-3">
-              Investigators ({members.length})
+              {isDraft ? 'Investigators — access on issue' : 'Investigators'} ({members.length})
             </p>
             {editable && (
               <Button size="xs" variant="ghost" icon={<UserPlus size={11} />} onClick={() => setAdding(true)}>
@@ -284,20 +353,52 @@ function SprintCard({ sprint, users, manage }: { sprint: Sprint; users: User[]; 
               )
             })}
           </div>
+
+          {listedOnly.length > 0 && (
+            <div className="mt-3">
+              <p className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-ink-3">
+                Also on the letter — no case access
+              </p>
+              <div className="space-y-1">
+                {listedOnly.map((e) => (
+                  <div key={e.id} className="flex items-center gap-2 text-[11.5px]">
+                    <span className="w-[120px] shrink-0 truncate text-ink-4">{roleOf(sprint.letter!.body, e.roleId)?.label ?? '—'}</span>
+                    <span className="truncate text-ink-2">{e.name || '—'}</span>
+                    {e.jobTitle && <span className="truncate text-ink-4">· {e.jobTitle}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <div>
           <p className="mb-2.5 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-ink-3">Document</p>
-          <button
-            onClick={download}
-            className="flex w-full items-start gap-2.5 rounded-lg border border-line-soft bg-abyss/30 p-2.5 text-left transition-colors hover:border-brand/45"
-          >
-            <Paperclip size={13} className="mt-0.5 shrink-0 text-ink-3" />
-            <span className="min-w-0">
-              <span className="block truncate text-[11.5px] text-ink-2">{sprint.docName}</span>
-              <span className="mt-0.5 block text-[10px] text-ink-4 tnum">{formatBytes(sprint.docSize)}</span>
-            </span>
-          </button>
+          {sprint.docBlobId ? (
+            <button
+              onClick={download}
+              className="flex w-full items-start gap-2.5 rounded-lg border border-line-soft bg-abyss/30 p-2.5 text-left transition-colors hover:border-brand/45"
+            >
+              <Paperclip size={13} className="mt-0.5 shrink-0 text-ink-3" />
+              <span className="min-w-0">
+                <span className="block truncate text-[11.5px] text-ink-2">{sprint.docName}</span>
+                <span className="mt-0.5 block text-[10px] text-ink-4 tnum">{formatBytes(sprint.docSize ?? 0)}</span>
+              </span>
+            </button>
+          ) : (
+            <p className="rounded-lg border border-dashed border-line-strong p-2.5 text-[11px] leading-relaxed text-ink-4">
+              No signed scan yet.
+            </p>
+          )}
+          {sprint.letter && (
+            <button
+              onClick={() => downloadLetterHtml(letterHtml(), sprint.number)}
+              className="mt-2 flex w-full items-center gap-2 rounded-lg border border-line-soft bg-abyss/30 p-2.5 text-left text-[11.5px] text-ink-3 transition-colors hover:border-brand/45 hover:text-ink-2"
+            >
+              <ScrollText size={13} className="shrink-0" />
+              <span className="min-w-0 truncate">Letter from template · {sprint.letter.templateName}</span>
+            </button>
+          )}
         </div>
       </div>
 

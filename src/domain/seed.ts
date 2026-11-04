@@ -1,6 +1,7 @@
 import { db } from './db'
 import { avatarDataUri } from './avatar'
 import { DEFAULT_ROLES } from './roles'
+import { defaultSprintTemplate } from './sprintLetter'
 import type {
   Activity,
   Bap,
@@ -1411,6 +1412,7 @@ const TEMPLATES: Template[] = [
     updatedAt: iso(75),
     blocks: ['Reference', 'Description', 'Collected by / at', 'Hash', 'Custody signatures'],
   },
+  defaultSprintTemplate(iso(20)),
 ]
 
 const QUESTION_SETS: QuestionSet[] = [
@@ -1807,7 +1809,7 @@ export async function seedDatabase(force = false): Promise<void> {
   const sprintDocs: BlobRecord[] = []
   const sprints = SPRINTS.map((s) => {
     const data = new Blob([sprintDocBody(s)], { type: s.docMime })
-    sprintDocs.push({ id: s.docBlobId, data })
+    if (s.docBlobId) sprintDocs.push({ id: s.docBlobId, data })
     return { ...s, docSize: data.size }
   })
 

@@ -10,6 +10,7 @@ import {
   Mail,
   Plus,
   Presentation,
+  ScrollText,
   Star,
   Tag,
   Trash2,
@@ -21,6 +22,7 @@ import { cn, relativeTime, uid } from '@/lib/utils'
 import { Badge, Button, Card, EmptyState, IconButton, Input, tone } from '@/components/ui/primitives'
 import { Modal } from '@/components/ui/Modal'
 import { AdminShell } from './AdminShell'
+import { SprintTemplateEditor } from './SprintTemplateEditor'
 import { Field } from '@/pages/CasesPage'
 import { toast } from '@/stores/toast'
 
@@ -29,6 +31,13 @@ const KINDS: { id: TemplateKind; label: string; icon: typeof FileText; color: st
   { id: 'deck', label: 'Deck', icon: Presentation, color: '#A855F7', blurb: 'Slide running order for challenge sessions' },
   { id: 'mail', label: 'Mail', icon: Mail, color: '#10B981', blurb: 'Boilerplate for outbound correspondence' },
   { id: 'evidence-label', label: 'Evidence Label', icon: Tag, color: '#F59E0B', blurb: 'Fields printed on evidence labels' },
+  {
+    id: 'sprint',
+    label: 'Surat Perintah',
+    icon: ScrollText,
+    color: '#EF4444',
+    blurb: 'Fixed wording of the Surat Perintah Investigasi — the SPRINT form on each case fills in the rest',
+  },
 ]
 
 export function TemplatePage() {
@@ -50,7 +59,7 @@ export function TemplatePage() {
   return (
     <AdminShell
       title="Template Customization"
-      description="Templates set the starting structure for new reports, decks, mail and evidence labels. Changing one does not affect documents already created from it."
+      description="Templates set the starting structure for new reports, decks, mail, evidence labels and Surat Perintah. Changing one does not affect documents already created from it."
       actions={
         <Button variant="primary" icon={<Plus size={13} />} onClick={() => setNewOpen(true)}>
           New template
@@ -183,8 +192,18 @@ export function TemplatePage() {
         </div>
       )}
 
-      {editing && <TemplateEditor template={editing} onClose={() => setEditing(null)} />}
-      {newOpen && <TemplateEditor kind={kind} onClose={() => setNewOpen(false)} />}
+      {editing &&
+        (editing.kind === 'sprint' ? (
+          <SprintTemplateEditor template={editing} onClose={() => setEditing(null)} />
+        ) : (
+          <TemplateEditor template={editing} onClose={() => setEditing(null)} />
+        ))}
+      {newOpen &&
+        (kind === 'sprint' ? (
+          <SprintTemplateEditor onClose={() => setNewOpen(false)} />
+        ) : (
+          <TemplateEditor kind={kind} onClose={() => setNewOpen(false)} />
+        ))}
     </AdminShell>
   )
 }
