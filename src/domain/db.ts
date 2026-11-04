@@ -1,5 +1,6 @@
 import Dexie, { type EntityTable } from 'dexie'
 import { DEFAULT_ROLES, DEFAULT_ROLE_ID, LEGACY_ROLE_MAP } from './roles'
+import { defaultSprintTemplate } from './sprintLetter'
 import type {
   Activity,
   Bap,
@@ -187,6 +188,21 @@ class CaseNavigatorDB extends Dexie {
             if (!Array.isArray(g.evidence)) g.evidence = []
             delete g.evidenceIds
           })
+      })
+
+    /**
+     * v5 — SPRINT templates. A workspace that already exists never re-runs
+     * the seed, so it gets the standard Surat Perintah template here; without
+     * one, the "draft from template" form would have nothing to start from.
+     */
+    this.version(5)
+      .stores({
+        templates: 'id, kind, isDefault',
+      })
+      .upgrade(async (tx) => {
+        const table = tx.table('templates')
+        const hasSprint = (await table.where('kind').equals('sprint').count()) > 0
+        if (!hasSprint) await table.put(defaultSprintTemplate(new Date().toISOString()))
       })
   }
 }

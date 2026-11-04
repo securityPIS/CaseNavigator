@@ -311,16 +311,126 @@ export interface Sprint {
   /** Undated orders stay valid until revoked. */
   validUntil?: string
   revoked: boolean
+  /**
+   * A letter still being drafted from a SPRINT template: filled in, printed
+   * and sent for signature, but not yet backed by a signed scan. A draft
+   * grants nobody access (see domain/access.ts).
+   */
+  draft?: boolean
   members: SprintMember[]
-  /** The scanned Surat Perintah. Required — an order without its document
-      grants nothing. */
-  docBlobId: string
-  docName: string
-  docMime: string
-  docSize: number
+  /** The filled-in letter, for orders drafted from a SPRINT template. Orders
+      recorded by uploading an existing scan have none. */
+  letter?: SprintLetter
+  /** The scanned, signed Surat Perintah. Every issued order has one — an
+      order without its document grants nothing. Only drafts go without. */
+  docBlobId?: string
+  docName?: string
+  docMime?: string
+  docSize?: number
   notes?: string
   createdAt: string
   updatedAt: string
+}
+
+/* ------------------------------------------------------ SPRINT template */
+
+/**
+ * One role in the order's "Susunan Tim" attachment — Pembina, Advisor,
+ * Koordinator, Anggota… The template decides which roles exist, how many
+ * people each takes, and whether holding it grants access to the case.
+ */
+export interface SprintTeamRole {
+  id: string
+  label: string
+  /** Fewest people the role needs before the order can be issued. */
+  min: number
+  /** Most people the role takes. Absent = no limit. */
+  max?: number
+  /** Access position granted to app users named in this role. Absent = the
+      role is listed on the letter but opens nothing (e.g. Pembina). */
+  access?: SprintPosition
+  /** Guidance shown on the form, e.g. "Level Manager". */
+  hint?: string
+}
+
+/**
+ * The fixed, organisation-wide wording of a Surat Perintah. Text may carry
+ * placeholders resolved at render time: {{jabatan_penerbit}}, {{perihal}}.
+ */
+export interface SprintTemplateBody {
+  /** Small reference printed top-left, e.g. "Lampiran 5-TKO No. …". */
+  lampiranCode: string
+  /** Heading beside the logo, e.g. "SURAT PERINTAH INVESTIGASI". */
+  headerTitle: string
+  /** Centred letter title, e.g. "SURAT PERINTAH". */
+  letterTitle: string
+  /** Number pattern; {urut} and {tahun} are filled from the form. */
+  numberPattern: string
+  /** The line under "TENTANG", e.g. "PELAKSANAAN INVESTIGASI". */
+  tentang: string
+  /** Office issuing the order, e.g. "VP HSSE". */
+  issuerTitle: string
+  /** Standing considerations printed after the case-specific ones. */
+  menimbangFixed: string[]
+  /** Default legal basis — copied into each letter, where it can be edited. */
+  dasar: string[]
+  kepada: string
+  untukIntro: string
+  /** Lead-in for the case-specific task, e.g. "Melakukan kegiatan investigasi
+      terkait dengan". The form supplies the rest. */
+  untukObjekPrefix: string
+  /** Standing tasks printed after the case-specific ones. */
+  untukFixed: string[]
+  /** Closing lines under the order. */
+  penutup: string[]
+  defaultPlace: string
+  lampiranTitle: string
+  roles: SprintTeamRole[]
+}
+
+/** One person on the letter's team attachment. */
+export interface SprintTeamEntry {
+  id: string
+  roleId: string
+  /** Set when the person is an app user — only then can the order grant
+      them access. Pembina and outside advisors usually have none. */
+  userId?: string
+  /** Snapshot as printed — a later change to the user record never rewrites
+      a signed order. */
+  name: string
+  employeeNo: string
+  jobTitle: string
+}
+
+/** The filled-in form behind a template-drafted Surat Perintah. */
+export interface SprintLetter {
+  templateId: string
+  templateName: string
+  /** Copy of the template wording at the time of drafting, so editing the
+      template never changes an order already written from it. */
+  body: SprintTemplateBody
+  /** Fills {urut} in the number pattern. */
+  seq: string
+  /** Fills {tahun} in the number pattern. */
+  year: string
+  /** The case under investigation — under the title and on the attachment. */
+  perihal: string
+  /** Menimbang point 1: the request or report that triggered the order. */
+  menimbang: string
+  /** Further case-specific considerations. */
+  menimbangExtra: string[]
+  /** Legal basis — starts as the template's list. */
+  dasar: string[]
+  /** What is investigated — completes the template's objek prefix. */
+  objek: string
+  /** Further case-specific tasks. */
+  untukExtra: string[]
+  place: string
+  /** YYYY-MM-DD. The order is in force from this date. */
+  dateIssued: string
+  signerName: string
+  signerTitle: string
+  team: SprintTeamEntry[]
 }
 
 /* ------------------------------------------------------------- Interview */
@@ -505,7 +615,7 @@ export interface CompanySettings {
   autoLockMinutes: number
 }
 
-export type TemplateKind = 'report' | 'deck' | 'mail' | 'evidence-label'
+export type TemplateKind = 'report' | 'deck' | 'mail' | 'evidence-label' | 'sprint'
 
 export interface Template {
   id: string
@@ -514,8 +624,11 @@ export interface Template {
   description: string
   updatedAt: string
   isDefault: boolean
-  /** Section headings for report templates, slide titles for decks. */
+  /** Section headings for report templates, slide titles for decks. For a
+      SPRINT template, a short summary shown on the template card. */
   blocks: string[]
+  /** The letter wording — SPRINT templates only. */
+  sprint?: SprintTemplateBody
 }
 
 export type QuestionType = 'text' | 'textarea' | 'select' | 'multiselect' | 'boolean' | 'date' | 'number'
