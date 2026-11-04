@@ -4,6 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import {
   ArrowLeft,
   Briefcase,
+  ChevronRight,
   ClipboardList,
   Download,
   FilePen,
@@ -25,7 +26,7 @@ import {
   X,
 } from 'lucide-react'
 import { db } from '@/domain/db'
-import { can, sprintState } from '@/domain/access'
+import { SPRINT_STATE_META, can, sprintState } from '@/domain/access'
 import { menimbangFromSource } from '@/domain/sprintLetter'
 import type { Case, CaseDocument, ReportSource, ReportSourceKind, Role, Sprint, User } from '@/domain/types'
 import { cn, daysUntil, formatBytes, formatDate, formatDateTime, PRIORITY_META, STATUS_META, uid } from '@/lib/utils'
@@ -197,10 +198,17 @@ export function CaseRegistrationPage() {
           />
 
           <Section
-            title={`SPRINT · ${sprints.length}`}
+            title="SPRINT"
             icon={<FileSignature size={13} />}
+            summary={
+              sprints[0]
+                ? `${sprints[0].number} · ${SPRINT_STATE_META[sprintState(sprints[0])].label}`
+                : 'Belum ada Surat Perintah'
+            }
             action={
-              manageSprint && (
+              // One case, one SPRINT: the way to add one goes once it exists.
+              manageSprint &&
+              sprints.length === 0 && (
                 <div className="flex items-center gap-1">
                   <Tooltip label="Unggah SPRINT bertanda tangan dari luar aplikasi">
                     <IconButton label="Unggah SPRINT" size={28} onClick={() => setUploading(true)}>
@@ -218,7 +226,8 @@ export function CaseRegistrationPage() {
               <div className="rounded-xl border border-dashed border-line-strong bg-abyss/30 px-4 py-5 text-center">
                 <p className="text-[12px] font-medium text-ink-2">Belum ada Surat Perintah</p>
                 <p className="mt-1 text-[11px] leading-relaxed text-ink-4">
-                  Tanpa SPRINT aktif, tidak ada penyidik yang dapat membuka perkara ini.
+                  Tanpa SPRINT aktif, tidak ada penyidik yang dapat membuka perkara ini. Satu perkara hanya
+                  memiliki satu SPRINT.
                 </p>
                 {manageSprint && (
                   <Button className="mt-3" size="sm" variant="primary" icon={<FilePen size={13} />} onClick={() => setDrafting('new')}>
@@ -227,15 +236,15 @@ export function CaseRegistrationPage() {
                 )}
               </div>
             ) : (
-              <div className="space-y-1.5">
-                {sprints.map((s) => (
-                  <SprintListItem
-                    key={s.id}
-                    sprint={s}
-                    active={s.id === sprintId}
-                    onSelect={() => select({ kind: 'sprint', id: s.id })}
-                  />
-                ))}
+              <div className="space-y-2">
+                <SprintListItem
+                  sprint={sprints[0]}
+                  active={sprints[0].id === sprintId}
+                  onSelect={() => select({ kind: 'sprint', id: sprints[0].id })}
+                />
+                <p className="text-[10.5px] leading-relaxed text-ink-4">
+                  Satu perkara hanya memiliki satu SPRINT. Perubahan tim dilakukan pada surat ini.
+                </p>
               </div>
             )}
           </Section>
@@ -261,6 +270,8 @@ export function CaseRegistrationPage() {
             sprint={openSprint}
             users={users}
             manage={manageSprint}
+            caseTitle={c.title}
+            reportSource={c.reportSource}
             onBack={() => select(null)}
             onEditDraft={() => setDrafting(openSprint)}
           />
@@ -303,15 +314,49 @@ export function CaseRegistrationPage() {
 
 /* -------------------------------------------------------------- Layout */
 
-function Section({ title, icon, action, children }: { title: string; icon: ReactNode; action?: ReactNode; children: ReactNode }) {
+/**
+ * A registration section that folds away. Every section starts collapsed,
+ * showing a one-line summary, so the whole registration reads at a glance.
+ * Pass `open` / `onOpenChange` when something outside must open it.
+ */
+function Section({
+  title,
+  icon,
+  action,
+  summary,
+  open: openProp,
+  onOpenChange,
+  children,
+}: {
+  title: string
+  icon: ReactNode
+  action?: ReactNode
+  summary?: ReactNode
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  children: ReactNode
+}) {
+  const [inner, setInner] = useState(false)
+  const open = openProp ?? inner
+  const toggle = () => (onOpenChange ? onOpenChange(!open) : setInner(!open))
+
   return (
-    <section className="border-b border-line-soft px-4 py-4">
-      <div className="mb-3 flex items-center gap-2">
-        <span className="text-brand-bright">{icon}</span>
-        <h3 className="flex-1 text-[11px] font-semibold uppercase tracking-[0.07em] text-ink-3">{title}</h3>
+    <section className="border-b border-line-soft">
+      <div className="flex items-center gap-2 px-4 py-3">
+        <button onClick={toggle} aria-expanded={open} className="group flex min-w-0 flex-1 items-center gap-2 text-left">
+          <ChevronRight
+            size={13}
+            className={cn('shrink-0 text-ink-4 transition-transform duration-200 group-hover:text-ink-2', open && 'rotate-90')}
+          />
+          <span className="shrink-0 text-brand-bright">{icon}</span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[11px] font-semibold uppercase tracking-[0.07em] text-ink-3 group-hover:text-ink-2">{title}</span>
+            {!open && summary && <span className="mt-0.5 block truncate text-[11px] text-ink-4">{summary}</span>}
+          </span>
+        </button>
         {action}
       </div>
-      {children}
+      {open && <div className="px-4 pb-4 animate-fade-in">{children}</div>}
     </section>
   )
 }
@@ -333,7 +378,7 @@ function CaseDetails({ c, assignee }: { c: Case; assignee?: User }) {
   const due = c.dueAt ? daysUntil(c.dueAt) : null
 
   return (
-    <Section title="Detail Kasus" icon={<Briefcase size={13} />}>
+    <Section title="Detail Kasus" icon={<Briefcase size={13} />} summary={`${c.code} · ${c.title}`}>
       <div className="mb-3">
         <p className="text-[11px] text-ink-4 tnum">{c.code}</p>
         <h2 className="mt-0.5 text-[15px] font-semibold leading-snug text-ink">{c.title}</h2>
@@ -410,16 +455,30 @@ function ReportSourceSection({
   onSave: (src: ReportSource, notaFile: File | null) => Promise<void>
 }) {
   const [editing, setEditing] = useState(false)
+  const [open, setOpen] = useState(false)
+  const edit = () => {
+    setOpen(true)
+    setEditing(true)
+  }
 
   return (
     <Section
       title="Sumber Laporan"
       icon={<Radio size={13} />}
+      open={open}
+      onOpenChange={setOpen}
+      summary={
+        source
+          ? `${SOURCE_META[source.kind].label}${
+              source.kind === 'wbs' ? ` · ${source.wbsNumber}` : source.kind === 'management' ? ` · ${source.notaDinasNumber}` : ''
+            }`
+          : 'Belum dicatat'
+      }
       action={
         editable &&
         source &&
         !editing && (
-          <Button size="xs" variant="ghost" icon={<Pencil size={11} />} onClick={() => setEditing(true)}>
+          <Button size="xs" variant="ghost" icon={<Pencil size={11} />} onClick={edit}>
             Ubah
           </Button>
         )
@@ -443,7 +502,7 @@ function ReportSourceSection({
           <p className="text-[12px] font-medium text-ink-2">Sumber laporan belum dicatat</p>
           <p className="mt-1 text-[11px] text-ink-4">WBS, Management Report, atau Internal Report.</p>
           {editable && (
-            <Button className="mt-3" size="sm" variant="outline" icon={<Radio size={13} />} onClick={() => setEditing(true)}>
+            <Button className="mt-3" size="sm" variant="outline" icon={<Radio size={13} />} onClick={edit}>
               Catat sumber laporan
             </Button>
           )}
@@ -736,7 +795,11 @@ function AccessList({ sprints, users, roles, meId }: { sprints: Sprint[]; users:
   }
 
   return (
-    <Section title="Siapa yang boleh melihat" icon={<KeyRound size={13} />}>
+    <Section
+      title="Siapa yang boleh melihat"
+      icon={<KeyRound size={13} />}
+      summary={`${viaSprint.length} lewat SPRINT · ${viaRole.length} lewat peran`}
+    >
       <div className="space-y-3.5">
         <div>
           <p className="mb-2 flex items-center gap-1.5 text-[10.5px] font-medium text-ink-3">
@@ -786,15 +849,16 @@ function DocumentList({
 
   return (
     <Section
-      title={`Dokumen Pendukung · ${documents.length}`}
+      title="Dokumen Pendukung"
       icon={<ClipboardList size={13} />}
+      summary={documents.length === 0 ? 'Belum ada dokumen' : `${documents.length} dokumen dasar investigasi`}
       action={
         <Button size="xs" variant="outline" icon={<Upload size={12} />} onClick={browse}>
           Unggah
         </Button>
       }
     >
-      <p className="-mt-1.5 mb-3 text-[11px] leading-relaxed text-ink-4">Dokumen yang dijadikan dasar investigasi.</p>
+      <p className="mb-3 text-[11px] leading-relaxed text-ink-4">Dokumen yang dijadikan dasar investigasi.</p>
       <input
         ref={fileRef}
         type="file"

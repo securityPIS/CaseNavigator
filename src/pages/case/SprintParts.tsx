@@ -16,8 +16,8 @@ import {
 } from 'lucide-react'
 import { db } from '@/domain/db'
 import { SPRINT_STATE_META, can, sprintState } from '@/domain/access'
-import { printLetterHtml, renderSprintLetterHtml, roleOf } from '@/domain/sprintLetter'
-import type { Role, Sprint, SprintPosition, User } from '@/domain/types'
+import { letterFromSprint, printLetterHtml, renderSprintLetterHtml, roleOf } from '@/domain/sprintLetter'
+import type { ReportSource, Role, Sprint, SprintPosition, User } from '@/domain/types'
 import { cn, formatBytes, formatDate, uid } from '@/lib/utils'
 import { Avatar, Badge, Button, IconButton, Input, Select, Textarea, tone, Tooltip } from '@/components/ui/primitives'
 import { Modal } from '@/components/ui/Modal'
@@ -33,6 +33,11 @@ export const POSITION_META: Record<SprintPosition, { label: string; color: strin
 }
 
 const POSITION_ORDER: SprintPosition[] = ['ketua', 'sekretaris', 'anggota']
+
+/** A case carries exactly one SPRINT; this guards every way of adding one. */
+export async function caseHasSprint(caseId: string): Promise<boolean> {
+  return (await db.sprints.where('caseId').equals(caseId).count()) > 0
+}
 
 /* ------------------------------------------------------------ List items */
 
@@ -73,33 +78,44 @@ export function SprintViewer({
   sprint,
   users,
   manage,
+  caseTitle,
+  reportSource,
   onBack,
   onEditDraft,
 }: {
   sprint: Sprint
   users: User[]
   manage: boolean
+  caseTitle?: string
+  reportSource?: ReportSource
   onBack: () => void
   onEditDraft: () => void
 }) {
   const settings = useLiveQuery(() => db.settings.get('settings'), [])
+  const template = useLiveQuery(
+    async () => (await db.templates.where('kind').equals('sprint').toArray()).find((t) => t.isDefault) ?? null,
+    [],
+  )
   const state = sprintState(sprint)
   const meta = SPRINT_STATE_META[state]
   const isDraft = state === 'draft'
   const editable = manage && (state === 'active' || state === 'scheduled')
-  const [view, setView] = useState<'letter' | 'scan'>(sprint.letter ? 'letter' : 'scan')
+  const [view, setView] = useState<'letter' | 'scan'>('letter')
   const [adding, setAdding] = useState(false)
 
+  // An order recorded only as a scan still previews as the template
+  // document, filled from its own data with placeholders for the rest.
+  const letter = useMemo(
+    () => sprint.letter ?? letterFromSprint(sprint, { users, caseTitle, reportSource, template: template ?? undefined }),
+    [sprint, users, caseTitle, reportSource, template],
+  )
   const letterHtml = useMemo(
-    () =>
-      sprint.letter
-        ? renderSprintLetterHtml(sprint.letter, { logoDataUrl: settings?.logoDataUrl, companyName: settings?.legalName })
-        : '',
-    [sprint.letter, settings],
+    () => renderSprintLetterHtml(letter, { logoDataUrl: settings?.logoDataUrl, companyName: settings?.legalName }),
+    [letter, settings],
   )
 
   const members = [...sprint.members].sort((a, b) => POSITION_ORDER.indexOf(a.position) - POSITION_ORDER.indexOf(b.position))
-  const listedOnly = (sprint.letter?.team ?? []).filter((e) => !e.userId || !roleOf(sprint.letter!.body, e.roleId)?.access)
+  const listedOnly = letter.team.filter((e) => !e.userId || !roleOf(letter.body, e.roleId)?.access)
 
   const removeMember = async (userId: string) => {
     await db.sprints.update(sprint.id, {
@@ -148,11 +164,9 @@ export function SprintViewer({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {sprint.letter && (
-            <Button size="sm" variant="outline" icon={<Printer size={13} />} onClick={() => printLetterHtml(letterHtml)}>
-              Cetak
-            </Button>
-          )}
+          <Button size="sm" variant="outline" icon={<Printer size={13} />} onClick={() => printLetterHtml(letterHtml)}>
+            Cetak
+          </Button>
           {isDraft && manage && (
             <Button size="sm" variant="primary" icon={<FilePen size={13} />} onClick={onEditDraft}>
               Lanjutkan draft
@@ -192,7 +206,7 @@ export function SprintViewer({
         </p>
       )}
 
-      {sprint.letter && sprint.docBlobId && (
+      {sprint.docBlobId && (
         <div className="flex shrink-0 gap-1 border-b border-line-soft px-4 py-1.5">
           {(['letter', 'scan'] as const).map((v) => (
             <button
@@ -211,7 +225,7 @@ export function SprintViewer({
 
       {/* Document */}
       <div className="min-h-0 flex-1 overflow-auto bg-abyss/20 p-4">
-        {sprint.letter && view === 'letter' ? (
+        {view === 'letter' ? (
           <LetterPreview html={letterHtml} className="mx-auto w-full max-w-[860px]" />
         ) : (
           <BlobPreview blobId={sprint.docBlobId} mime={sprint.docMime} name={sprint.docName ?? sprint.number} size={sprint.docSize} />
@@ -254,7 +268,7 @@ export function SprintViewer({
         {listedOnly.length > 0 && (
           <p className="mt-2 text-[11px] text-ink-4">
             Juga tercantum tanpa akses perkara:{' '}
-            {listedOnly.map((e) => `${e.name || '—'} (${roleOf(sprint.letter!.body, e.roleId)?.label ?? '—'})`).join(', ')}
+            {listedOnly.map((e) => `${e.name || '—'} (${roleOf(letter.body, e.roleId)?.label ?? '—'})`).join(', ')}
           </p>
         )}
         {sprint.notes && <p className="mt-2 text-[11px] italic text-ink-4">{sprint.notes}</p>}
@@ -363,6 +377,10 @@ export function UploadSprintModal({
 
   const create = async () => {
     if (!valid || !file) return
+    if (await caseHasSprint(caseId)) {
+      toast.error('SPRINT sudah ada', 'Satu perkara hanya boleh memiliki satu Surat Perintah.')
+      return
+    }
     setSaving(true)
     try {
       const blobId = uid('blob')
