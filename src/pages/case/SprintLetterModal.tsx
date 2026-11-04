@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { AlertTriangle, CheckCircle2, KeyRound, Plus, Printer, X } from 'lucide-react'
 import { db } from '@/domain/db'
-import type { Role, Sprint, SprintLetter, SprintTeamEntry, SprintTeamRole, Template, User } from '@/domain/types'
+import type { CasePriority, Role, Sprint, SprintLetter, SprintTeamEntry, SprintTeamRole, Template, User } from '@/domain/types'
 import {
   fieldsIn,
   letterProblems,
@@ -19,6 +19,7 @@ import { Modal } from '@/components/ui/Modal'
 import { FormSection, LetterPreview, ListEditor } from '@/components/sprint/LetterParts'
 import { Field } from '@/pages/CasesPage'
 import { toast } from '@/stores/toast'
+import { useSession } from '@/stores/session'
 import { caseHasSprint } from './SprintParts'
 
 const ACCESS_LABEL = { ketua: 'Ketua Tim', sekretaris: 'Sekretaris', anggota: 'Anggota' } as const
@@ -26,10 +27,13 @@ const ACCESS_LABEL = { ketua: 'Ketua Tim', sekretaris: 'Sekretaris', anggota: 'A
 /**
  * The SPRINT form: fills in a Surat Perintah template for one case.
  *
- * Two ways out. "Save draft" keeps the letter so it can be printed and sent
- * for signature — a draft grants nobody access. "Issue" needs the form
- * complete and the signed scan attached; only then does the named team gain
- * access to the case.
+ * Opened without a caseId it is how a case begins: saving it opens the case
+ * (titled after the perihal, led by the coordinator) together with its
+ * SPRINT.
+ *
+ * Two ways out. "Save draft" keeps the letter to finish later — a draft
+ * grants nobody access. "Issue" needs the form complete; only then does the
+ * named team gain access to the case.
  */
 export function SprintLetterModal({
   caseId,
@@ -40,7 +44,8 @@ export function SprintLetterModal({
   onClose,
   onSaved,
 }: {
-  caseId: string
+  /** The case the order is for. Absent = the order opens a new case. */
+  caseId?: string
   /** The draft being continued. Absent = a new order. */
   sprint?: Sprint
   users: User[]
@@ -49,12 +54,16 @@ export function SprintLetterModal({
       laporan. */
   menimbangHint?: string
   onClose: () => void
-  /** Called with the order's id once it is saved. */
-  onSaved?: (id: string) => void
+  /** Called with the order's id, and its case's, once it is saved. */
+  onSaved?: (id: string, caseId: string) => void
 }) {
+  const newCase = !caseId
+  const userId = useSession((st) => st.userId)
+  const [priority, setPriority] = useState<CasePriority>('medium')
   const templates = useLiveQuery(() => db.templates.where('kind').equals('sprint').toArray(), [])
   const settings = useLiveQuery(() => db.settings.get('settings'), [])
-  const caseRec = useLiveQuery(() => db.cases.get(caseId), [caseId])
+  // null (not undefined) when opening a new case, so the form doesn't wait.
+  const caseRec = useLiveQuery(async () => (caseId ? ((await db.cases.get(caseId)) ?? null) : null), [caseId])
 
   const [letter, setLetter] = useState<SprintLetter | null>(sprint?.letter ? structuredClone(sprint.letter) : null)
   const [validUntil, setValidUntil] = useState(sprint?.validUntil?.slice(0, 10) ?? '')
@@ -131,6 +140,44 @@ export function SprintLetterModal({
 
   /* ----------------------------------------------------------- save */
 
+  /** Opens the case a new SPRINT is for, and returns its id. */
+  const openCase = async (
+    l: SprintLetter,
+    members: { userId: string; position: string }[],
+    issue: boolean,
+    now: string,
+  ): Promise<string> => {
+    const appSettings = await db.settings.get('settings')
+    const id = uid('case')
+    // Next number after the highest one used this year — counting cases would
+    // hand out a code that already exists once any number has been skipped.
+    const stem = `${appSettings?.caseCodePrefix ?? 'CN'}-${new Date().getFullYear()}-`
+    const taken = (await db.cases.toArray())
+      .map((c) => (c.code.startsWith(stem) ? Number(c.code.slice(stem.length)) : 0))
+      .filter((n) => Number.isFinite(n))
+    const code = `${stem}${String(Math.max(0, ...taken) + 1).padStart(3, '0')}`
+    const lead = members.find((m) => m.position === 'ketua') ?? members[0]
+    const memberIds = members.map((m) => m.userId)
+    await db.cases.add({
+      id,
+      code,
+      title: l.perihal.trim(),
+      summary: l.objek.trim() ? `Investigasi terkait ${l.objek.trim()}.` : l.menimbang.trim() || 'Belum ada ringkasan.',
+      priority,
+      status: issue ? 'active' : 'pending',
+      progress: 0,
+      assigneeId: lead?.userId ?? userId,
+      teamIds: memberIds.length > 0 ? memberIds : [userId],
+      tags: [],
+      openedAt: now,
+      updatedAt: now,
+      // Whoever opens the case keeps sight of it even when not on the team.
+      viewerIds: memberIds.includes(userId) ? [] : [userId],
+    })
+    await db.activities.add({ id: uid('ac'), caseId: id, actorId: userId, verb: 'opened', object: code, at: now, kind: 'case' })
+    return id
+  }
+
   const persist = async (issue: boolean) => {
     if (!letter.perihal.trim()) {
       toast.error('Perihal is required', 'Name the case under investigation before saving.')
@@ -141,7 +188,7 @@ export function SprintLetterModal({
       return
     }
     // One case, one SPRINT — a second order is never created alongside it.
-    if (!sprint && (await caseHasSprint(caseId))) {
+    if (!sprint && caseId && (await caseHasSprint(caseId))) {
       toast.error('SPRINT sudah ada', 'Satu perkara hanya boleh memiliki satu Surat Perintah.')
       return
     }
@@ -156,10 +203,12 @@ export function SprintLetterModal({
         team: letter.team.map((e) => ({ ...e, name: e.name.trim(), employeeNo: e.employeeNo.trim(), jobTitle: e.jobTitle.trim() })),
       }
       const issuedAt = clean.dateIssued ? new Date(clean.dateIssued).toISOString() : now
+      const members = membersFromLetter(clean)
+      const targetCase = caseId ?? (await openCase(clean, members, issue, now))
 
       const record: Sprint = {
         id: sprint?.id ?? uid('sp'),
-        caseId,
+        caseId: targetCase,
         number: sprintNumber(clean.body, clean.seq, clean.year),
         subject: clean.perihal.trim(),
         issuedBy: [clean.signerName.trim(), clean.signerTitle.trim()].filter(Boolean).join(' — ') || clean.body.issuerTitle,
@@ -168,16 +217,18 @@ export function SprintLetterModal({
         validUntil: validUntil ? new Date(validUntil).toISOString() : undefined,
         revoked: false,
         draft: !issue,
-        members: membersFromLetter(clean).map((m) => ({ ...m, addedAt: now })),
+        members: members.map((m) => ({ ...m, addedAt: now })),
         letter: clean,
         notes: notes.trim() || undefined,
         createdAt: sprint?.createdAt ?? now,
         updatedAt: now,
       }
       await db.sprints.put(record)
-      onSaved?.(record.id)
+      onSaved?.(record.id, targetCase)
 
-      if (issue) {
+      if (newCase) {
+        toast.success('Perkara dibuat', `${clean.perihal.trim()} — SPRINT ${issue ? 'diterbitkan' : 'disimpan sebagai draft'}.`)
+      } else if (issue) {
         const n = record.members.length
         toast.success('SPRINT issued', `${n} investigator${n === 1 ? '' : 's'} can now open this case.`)
       } else {
@@ -193,8 +244,12 @@ export function SprintLetterModal({
     <Modal
       open
       onClose={onClose}
-      title={sprint ? `Draft ${sprint.number}` : 'Draft Surat Perintah'}
-      description="Fill in the case-specific parts of the order. The fixed wording comes from the template; the preview shows the letter as it will print."
+      title={sprint ? `Draft ${sprint.number}` : newCase ? 'Buat SPRINT' : 'Draft Surat Perintah'}
+      description={
+        newCase
+          ? 'A case begins with its Surat Perintah. Saving this form opens the case — titled after the perihal and led by the coordinator — together with its SPRINT.'
+          : 'Fill in the case-specific parts of the order. The fixed wording comes from the template; the preview shows the letter as it will print.'
+      }
       size="xl"
       footer={
         <>
@@ -263,7 +318,29 @@ export function SprintLetterModal({
                 </div>
               </Field>
             </div>
-            <Field label="Perihal kasus" required hint="Printed under TENTANG and as the subtitle of the team attachment.">
+            {newCase && (
+              <Field label="Prioritas perkara">
+                <Select
+                  value={priority}
+                  onChange={(e) => setPriority(e.target.value as CasePriority)}
+                  options={[
+                    { value: 'low', label: 'Low' },
+                    { value: 'medium', label: 'Medium' },
+                    { value: 'high', label: 'High' },
+                    { value: 'critical', label: 'Critical' },
+                  ]}
+                />
+              </Field>
+            )}
+            <Field
+              label="Perihal kasus"
+              required
+              hint={
+                newCase
+                  ? 'Also becomes the case title. Printed under TENTANG and as the subtitle of the team attachment.'
+                  : 'Printed under TENTANG and as the subtitle of the team attachment.'
+              }
+            >
               <Textarea rows={2} value={letter.perihal} onChange={(e) => set('perihal', e.target.value)} placeholder="Kasus yang akan diinvestigasi" />
             </Field>
           </FormSection>
