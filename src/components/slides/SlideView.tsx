@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useEffect, useRef } from 'react'
 import type { GraphNode, Slide, SlideElement } from '@/domain/types'
 import { ENTITY_COLORS, withAlpha } from '@/lib/utils'
 import { ENTITY_ICONS } from '@/components/graph/EntityNode'
@@ -31,6 +31,12 @@ interface Props {
   onSelectElement?: (id: string | null) => void
   onElementPointerDown?: (e: React.PointerEvent, el: SlideElement) => void
   interactive?: boolean
+  /** The text element being typed into on the slide itself. */
+  editingId?: string | null
+  /** Double-click (or Enter) on a text element asks to edit it in place. */
+  onStartEdit?: (id: string) => void
+  /** The edited text, once the user clicks away or presses Escape. */
+  onCommitText?: (id: string, text: string) => void
 }
 
 /**
@@ -46,6 +52,9 @@ function SlideViewImpl({
   onSelectElement,
   onElementPointerDown,
   interactive = false,
+  editingId,
+  onStartEdit,
+  onCommitText,
 }: Props) {
   return (
     <div
@@ -75,6 +84,9 @@ function SlideViewImpl({
               nodes={nodes}
               selected={selectedId === el.id}
               interactive={interactive}
+              editing={interactive && editingId === el.id}
+              onStartEdit={() => onStartEdit?.(el.id)}
+              onCommitText={(text) => onCommitText?.(el.id, text)}
               onPointerDown={(e) => {
                 if (!interactive) return
                 e.stopPropagation()
@@ -93,12 +105,18 @@ function ElementView({
   nodes,
   selected,
   interactive,
+  editing,
+  onStartEdit,
+  onCommitText,
   onPointerDown,
 }: {
   el: SlideElement
   nodes: GraphNode[]
   selected: boolean
   interactive: boolean
+  editing: boolean
+  onStartEdit: () => void
+  onCommitText: (text: string) => void
   onPointerDown: (e: React.PointerEvent) => void
 }) {
   const base: React.CSSProperties = {
@@ -114,25 +132,24 @@ function ElementView({
   }
 
   if (el.kind === 'text') {
+    const type: React.CSSProperties = {
+      color: el.color ?? '#EAF1FF',
+      fontSize: el.fontSize ?? 18,
+      fontWeight: el.fontWeight ?? 400,
+      textAlign: el.align ?? 'left',
+      fontFamily: FONTS[el.fontFamily ?? 'sans'],
+      lineHeight: 1.4,
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-word',
+    }
+    if (editing) return <InlineText el={el} style={{ ...base, ...type, cursor: 'text' }} onCommit={onCommitText} />
     return (
       <div
-        style={{
-          ...base,
-          color: el.color ?? '#EAF1FF',
-          fontSize: el.fontSize ?? 18,
-          fontWeight: el.fontWeight ?? 400,
-          textAlign: el.align ?? 'left',
-          fontFamily: FONTS[el.fontFamily ?? 'sans'],
-          lineHeight: 1.4,
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'flex-start',
-        }}
+        style={{ ...base, ...type, display: 'flex', flexDirection: 'column', justifyContent: 'flex-start' }}
         onPointerDown={onPointerDown}
+        onDoubleClick={interactive ? onStartEdit : undefined}
       >
-        {el.text}
+        {el.text || (interactive ? <span style={{ opacity: 0.4 }}>Klik dua kali untuk mengetik</span> : null)}
       </div>
     )
   }
@@ -247,6 +264,89 @@ function ElementView({
         <span style={{ display: 'block', marginTop: 2, fontSize: 11.5, color }}>{node.sublabel}</span>
       </span>
     </div>
+  )
+}
+
+/**
+ * A text element being typed into where it sits on the slide, in its own
+ * type. The text is written back once, when the user leaves the box.
+ */
+function InlineText({
+  el,
+  style,
+  onCommit,
+}: {
+  el: SlideElement
+  style: React.CSSProperties
+  onCommit: (text: string) => void
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+  // Latest text and callback, so leaving by any route — blur, or the box
+  // being taken away when the selection or slide changes — keeps the words.
+  const value = useRef(el.text ?? '')
+  const commit = useRef(onCommit)
+  commit.current = onCommit
+  const done = useRef(false)
+  const finish = () => {
+    if (done.current) return
+    done.current = true
+    commit.current(value.current)
+  }
+
+  useEffect(() => () => finish(), [])
+
+  // Grow with the text, never below the element's own height, so every line
+  // stays in view while typing.
+  const fit = () => {
+    const t = ref.current
+    if (!t) return
+    t.style.height = 'auto'
+    t.style.height = `${Math.max(el.h, t.scrollHeight)}px`
+  }
+
+  useEffect(() => {
+    const t = ref.current
+    if (!t) return
+    fit()
+    t.focus()
+    // A fresh box still holds its placeholder wording — select it so typing
+    // replaces it. Otherwise carry on from the end.
+    if (el.text === 'New text') t.select()
+    else t.setSelectionRange(t.value.length, t.value.length)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  return (
+    <textarea
+      ref={ref}
+      defaultValue={el.text ?? ''}
+      aria-label="Edit text"
+      spellCheck={false}
+      onPointerDown={(e) => e.stopPropagation()}
+      onChange={(e) => {
+        value.current = e.target.value
+        fit()
+      }}
+      onBlur={finish}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          e.currentTarget.blur()
+        }
+      }}
+      style={{
+        ...style,
+        background: 'rgb(96 165 250 / 0.06)',
+        border: 'none',
+        outline: '2px solid #60A5FA',
+        outlineOffset: 2,
+        padding: 0,
+        margin: 0,
+        resize: 'none',
+        overflow: 'hidden',
+        caretColor: '#60A5FA',
+      }}
+    />
   )
 }
 
