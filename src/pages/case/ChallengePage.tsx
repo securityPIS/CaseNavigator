@@ -10,7 +10,9 @@ import {
   Bold,
   ChevronDown,
   Copy,
+  FileInput,
   Image as ImageIcon,
+  PencilLine,
   Layers,
   Play,
   Plus,
@@ -28,6 +30,7 @@ import { BACKGROUNDS, SLIDE_H, SLIDE_W, SlideView } from '@/components/slides/Sl
 import { Button, EmptyState, IconButton, Input, Select, Textarea, Tooltip } from '@/components/ui/primitives'
 import { PageSpinner } from '@/components/ui/PageSpinner'
 import { toast } from '@/stores/toast'
+import { CaseInsertPicker, type InsertBlock } from './CaseInsertPicker'
 
 const LAYOUT_LABELS: Record<SlideLayout, string> = {
   title: 'Title',
@@ -52,6 +55,9 @@ export function ChallengePage() {
 
   const [current, setCurrent] = useState(0)
   const [selectedEl, setSelectedEl] = useState<string | null>(null)
+  /** Text element being typed into on the slide itself. */
+  const [editingEl, setEditingEl] = useState<string | null>(null)
+  const [inserting, setInserting] = useState(false)
   const [presenting, setPresenting] = useState(false)
   const [notesOpen, setNotesOpen] = useState(true)
   const [scale, setScale] = useState(0.6)
@@ -75,7 +81,15 @@ export function ChallengePage() {
     return () => ro.disconnect()
   }, [notesOpen])
 
-  useEffect(() => setSelectedEl(null), [current])
+  useEffect(() => {
+    setSelectedEl(null)
+    setEditingEl(null)
+  }, [current])
+
+  // Selecting something else ends in-place editing.
+  useEffect(() => {
+    if (editingEl && selectedEl !== editingEl) setEditingEl(null)
+  }, [selectedEl, editingEl])
 
   useEffect(() => {
     if (current >= slides.length && slides.length > 0) setCurrent(slides.length - 1)
@@ -118,6 +132,96 @@ export function ChallengePage() {
       }
       await patchSlide(slide.id, { elements: [...slide.elements, el] })
       setSelectedEl(el.id)
+      // A new text box opens for typing straight away, on the slide.
+      if (kind === 'text') setEditingEl(el.id)
+    },
+    [slide, patchSlide],
+  )
+
+  const commitText = useCallback(
+    async (elId: string, text: string) => {
+      setEditingEl((cur) => (cur === elId ? null : cur))
+      const el = slide?.elements.find((e) => e.id === elId)
+      if (el && el.text !== text) await patchElement(elId, { text })
+    },
+    [slide, patchElement],
+  )
+
+  /**
+   * Places a piece of the case record on the current slide: its heading and
+   * text as two editable text boxes, with the image alongside when it has
+   * one. It goes below what is already there while that still fits.
+   */
+  const insertBlock = useCallback(
+    async (block: InsertBlock) => {
+      if (!slide) return
+      let src: string | undefined
+      if (block.imageBlobId) {
+        const rec = await db.blobs.get(block.imageBlobId)
+        if (rec) {
+          src = await new Promise<string>((resolve) => {
+            const r = new FileReader()
+            r.onload = () => resolve(r.result as string)
+            r.readAsDataURL(rec.data)
+          })
+        }
+      }
+
+      const bottom = slide.elements.reduce((m, e) => (e.y + e.h <= SLIDE_H ? Math.max(m, e.y + e.h) : m), 0)
+      let y = bottom > 0 ? bottom + 24 : 140
+      if (y > SLIDE_H - 170) y = 140
+      const x = 70
+      const textW = src ? 460 : 820
+      // Rough line count for a box of this width, so a long heading pushes the
+      // text below it down instead of running over it.
+      const linesAt = (text: string, size: number) => {
+        const perLine = Math.max(12, Math.floor(textW / (size * 0.56)))
+        return text.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / perLine)), 0)
+      }
+      const headingSize = 24
+      const headingH = Math.round(linesAt(block.heading, headingSize) * headingSize * 1.4 + 4)
+      const bodySize = 16
+      const bodyY = y + headingH + 8
+      const bodyH = Math.min(Math.max(linesAt(block.body, bodySize) * bodySize * 1.4 + 8, 40), Math.max(60, SLIDE_H - bodyY - 24))
+      const maxZ = slide.elements.reduce((m, e) => Math.max(m, e.z), 0)
+
+      const heading: SlideElement = {
+        id: uid('el'),
+        kind: 'text',
+        text: block.heading,
+        x,
+        y,
+        w: textW,
+        h: headingH,
+        fontSize: headingSize,
+        fontWeight: 700,
+        color: '#60A5FA',
+        align: 'left',
+        fontFamily: 'sans',
+        z: maxZ + 1,
+      }
+      const body: SlideElement = {
+        id: uid('el'),
+        kind: 'text',
+        text: block.body,
+        x,
+        y: bodyY,
+        w: textW,
+        h: Math.round(bodyH),
+        fontSize: bodySize,
+        fontWeight: 400,
+        color: '#9DB0D0',
+        align: 'left',
+        fontFamily: 'sans',
+        z: maxZ + 2,
+      }
+      const added: SlideElement[] = [heading, body]
+      if (src) added.push({ id: uid('el'), kind: 'image', src, x: 560, y, w: 330, h: 220, radius: 10, z: maxZ + 3 })
+
+      await patchSlide(slide.id, { elements: [...slide.elements, ...added] })
+      setSelectedEl(heading.id)
+      setInserting(false)
+      toast.success('Disisipkan ke slide', block.title)
     },
     [slide, patchSlide],
   )
@@ -314,6 +418,11 @@ export function ChallengePage() {
         return
       }
 
+      if (selectedEl && element?.kind === 'text' && e.key === 'Enter') {
+        e.preventDefault()
+        setEditingEl(selectedEl)
+        return
+      }
       if (selectedEl && (e.key === 'Delete' || e.key === 'Backspace')) {
         e.preventDefault()
         deleteElement(selectedEl)
@@ -433,6 +542,14 @@ export function ChallengePage() {
 
         <span className="h-5 w-px bg-line" />
 
+        <div className="flex items-center px-2">
+          <Button size="sm" variant="secondary" icon={<FileInput size={13} />} onClick={() => setInserting(true)}>
+            Sisipkan dari perkara
+          </Button>
+        </div>
+
+        <span className="h-5 w-px bg-line" />
+
         <div className="flex items-center gap-2 px-2">
           <span className="text-[11px] text-ink-4">Layout</span>
           <div className="w-[130px]">
@@ -540,6 +657,12 @@ export function ChallengePage() {
                   selectedId={selectedEl}
                   onSelectElement={setSelectedEl}
                   onElementPointerDown={onElementPointerDown}
+                  editingId={editingEl}
+                  onStartEdit={(id) => {
+                    setSelectedEl(id)
+                    setEditingEl(id)
+                  }}
+                  onCommitText={commitText}
                 />
                 {/* Resize handle for the current selection */}
                 {element && (
@@ -580,6 +703,7 @@ export function ChallengePage() {
           {element ? (
             <ElementInspector
               el={element}
+              onEditText={() => setEditingEl(element.id)}
               onPatch={(p) => patchElement(element.id, p)}
               onDelete={() => deleteElement(element.id)}
               onDuplicate={() => duplicateElement(element.id)}
@@ -589,12 +713,15 @@ export function ChallengePage() {
               <Shapes size={20} className="mx-auto text-ink-4" />
               <p className="mt-2.5 text-[12px] font-medium text-ink-2">Nothing selected</p>
               <p className="mt-1.5 text-[11px] leading-relaxed text-ink-4">
-                Click an element on the slide to edit it, or add one from the toolbar.
+                Click an element on the slide to select it — double-click text to type on the slide. Add more from the
+                toolbar, or bring in the case record with “Sisipkan dari perkara”.
               </p>
             </div>
           )}
         </div>
       </div>
+
+      {inserting && <CaseInsertPicker caseId={caseId} onInsert={insertBlock} onClose={() => setInserting(false)} />}
     </div>
   )
 }
@@ -603,11 +730,13 @@ export function ChallengePage() {
 
 function ElementInspector({
   el,
+  onEditText,
   onPatch,
   onDelete,
   onDuplicate,
 }: {
   el: SlideElement
+  onEditText: () => void
   onPatch: (p: Partial<SlideElement>) => void
   onDelete: () => void
   onDuplicate: () => void
@@ -630,8 +759,14 @@ function ElementInspector({
 
       {el.kind === 'text' && (
         <>
-          <Label>Text</Label>
-          <Textarea rows={4} value={el.text ?? ''} onChange={(e) => onPatch({ text: e.target.value })} className="text-[12px]" />
+          {/* The words themselves are typed on the slide; this panel only styles them. */}
+          <button
+            onClick={onEditText}
+            className="flex w-full items-center gap-2 rounded-lg border border-dashed border-line-strong px-2.5 py-2 text-left text-[11.5px] text-ink-3 transition-colors hover:border-brand/50 hover:text-brand-bright"
+          >
+            <PencilLine size={13} className="shrink-0" />
+            <span>Edit teks di slide — atau klik dua kali teksnya</span>
+          </button>
 
           <div className="grid grid-cols-2 gap-2">
             <div>
