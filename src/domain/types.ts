@@ -48,8 +48,14 @@ export interface Case {
    * recorded line has no blobId.
    */
   documents?: CaseDocument[]
-  /** Where the report that opened the case came from. */
-  reportSource?: ReportSource
+  /** Where the reports that opened the case came from — a case can arrive
+      through more than one channel. */
+  reportSources?: ReportSource[]
+  /**
+   * People granted view access to this case by hand, on top of the SPRINT
+   * team and the roles that see every case — e.g. legal or a line manager.
+   */
+  viewerIds?: string[]
 }
 
 /**
@@ -62,6 +68,7 @@ export interface Case {
 export type ReportSourceKind = 'wbs' | 'management' | 'internal'
 
 export interface ReportSource {
+  id: string
   kind: ReportSourceKind
   /** WBS only. */
   wbsNumber?: string

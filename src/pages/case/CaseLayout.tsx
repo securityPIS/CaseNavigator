@@ -53,7 +53,8 @@ export function CaseLayout() {
     const me = await db.users.get(userId)
     const role = me ? await db.roles.get(me.role) : undefined
     const sprints = await db.sprints.where('caseId').equals(caseId).toArray()
-    return { ok: canAccessCase(me, role, sprints), roleName: role?.name ?? 'No role', name: me?.name ?? 'Unknown user' }
+    const rec = await db.cases.get(caseId)
+    return { ok: canAccessCase(me, role, sprints, rec?.viewerIds), roleName: role?.name ?? 'No role', name: me?.name ?? 'Unknown user' }
   }, [caseId, userId])
 
   const counts = useLiveQuery(

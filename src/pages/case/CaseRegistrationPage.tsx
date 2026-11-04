@@ -20,14 +20,16 @@ import {
   Pencil,
   Radio,
   ShieldCheck,
+  Plus,
   Trash2,
   Upload,
+  UserPlus,
   Users,
   X,
 } from 'lucide-react'
 import { db } from '@/domain/db'
 import { SPRINT_STATE_META, can, sprintState } from '@/domain/access'
-import { menimbangFromSource } from '@/domain/sprintLetter'
+import { menimbangFromSources } from '@/domain/sprintLetter'
 import type { Case, CaseDocument, ReportSource, ReportSourceKind, Role, Sprint, User } from '@/domain/types'
 import { cn, daysUntil, formatBytes, formatDate, formatDateTime, PRIORITY_META, STATUS_META, uid } from '@/lib/utils'
 import { Avatar, Badge, Button, EmptyState, IconButton, Input, Progress, Select, Textarea, tone, Tooltip } from '@/components/ui/primitives'
@@ -35,7 +37,7 @@ import { BlobPreview, downloadBlob } from '@/components/ui/BlobPreview'
 import { useSession } from '@/stores/session'
 import { toast } from '@/stores/toast'
 import { SprintLetterModal } from './SprintLetterModal'
-import { SprintListItem, SprintViewer, UploadSprintModal } from './SprintParts'
+import { AddInvestigatorModal, InvestigatorList, SprintListItem, SprintViewer, useSprintLetter } from './SprintParts'
 
 const CATEGORY_COLOR: Record<string, string> = {
   Laporan: '#EF4444',
@@ -86,7 +88,7 @@ export function CaseRegistrationPage() {
   const editCase = can(myRole, 'case.edit')
 
   const [drafting, setDrafting] = useState<Sprint | 'new' | null>(null)
-  const [uploading, setUploading] = useState(false)
+  const [addingInvestigator, setAddingInvestigator] = useState(false)
 
   const documents = useMemo(
     () => [...(c?.documents ?? [])].sort((a, b) => a.uploadedAt.localeCompare(b.uploadedAt)),
@@ -94,6 +96,11 @@ export function CaseRegistrationPage() {
   )
   const openDoc = useMemo(() => documents.find((d) => d.id === docId) ?? null, [documents, docId])
   const openSprint = useMemo(() => sprints?.find((s) => s.id === sprintId) ?? null, [sprints, sprintId])
+  // One case, one SPRINT.
+  const sprint = sprints?.[0]
+  const sources = useMemo(() => c?.reportSources ?? [], [c?.reportSources])
+  const letter = useSprintLetter(sprint, { users, caseTitle: c?.title, reportSources: sources })
+  const notaIds = useMemo(() => new Set(sources.map((x) => x.notaDinasDocId).filter((x): x is string => !!x)), [sources])
 
   const select = (sel: Selection, replace = false) =>
     setParams(
@@ -146,12 +153,12 @@ export function CaseRegistrationPage() {
 
   const removeDoc = async (doc: CaseDocument) => {
     if (!c) return
-    const isNota = c.reportSource?.notaDinasDocId === doc.id
+    const isNota = notaIds.has(doc.id)
     if (isNota && !window.confirm(`“${doc.name}” adalah nota dinas sumber laporan. Tetap hapus?`)) return
     if (doc.blobId) await db.blobs.delete(doc.blobId)
     await db.cases.update(caseId, {
       documents: (c.documents ?? []).filter((d) => d.id !== doc.id),
-      ...(isNota ? { reportSource: { ...c.reportSource!, notaDinasDocId: undefined } } : {}),
+      reportSources: sources.map((x) => (x.notaDinasDocId === doc.id ? { ...x, notaDinasDocId: undefined } : x)),
       updatedAt: new Date().toISOString(),
     })
     if (docId === doc.id) select(null, true)
@@ -167,8 +174,27 @@ export function CaseRegistrationPage() {
       docs = [...docs, doc]
       next = { ...src, notaDinasDocId: doc.id }
     }
-    await db.cases.update(caseId, { reportSource: next, documents: docs, updatedAt: new Date().toISOString() })
+    const list = sources.some((x) => x.id === next.id) ? sources.map((x) => (x.id === next.id ? next : x)) : [...sources, next]
+    await db.cases.update(caseId, { reportSources: list, documents: docs, updatedAt: new Date().toISOString() })
     toast.success('Sumber laporan disimpan', SOURCE_META[src.kind].label)
+  }
+
+  const removeSource = async (src: ReportSource) => {
+    await db.cases.update(caseId, { reportSources: sources.filter((x) => x.id !== src.id), updatedAt: new Date().toISOString() })
+    toast.success('Sumber laporan dihapus', SOURCE_META[src.kind].label)
+  }
+
+  const saveViewers = async (viewerIds: string[]) => {
+    await db.cases.update(caseId, { viewerIds, updatedAt: new Date().toISOString() })
+  }
+
+  const saveNote = async (doc: CaseDocument, note: string) => {
+    if (!c) return
+    await db.cases.update(caseId, {
+      documents: (c.documents ?? []).map((d) => (d.id === doc.id ? { ...d, note: note || undefined } : d)),
+      updatedAt: new Date().toISOString(),
+    })
+    toast.success('Deskripsi disimpan', doc.name)
   }
 
   if (!c || !sprints) {
@@ -189,44 +215,36 @@ export function CaseRegistrationPage() {
           <CaseDetails c={c} assignee={assignee ?? undefined} />
 
           <ReportSourceSection
-            source={c.reportSource}
+            sources={sources}
             documents={documents}
             editable={editCase}
             recordedBy={me?.name}
             onOpenDoc={(id) => select({ kind: 'doc', id })}
             onSave={saveSource}
+            onRemove={removeSource}
           />
 
           <Section
             title="SPRINT"
             icon={<FileSignature size={13} />}
             summary={
-              sprints[0]
-                ? `${sprints[0].number} · ${SPRINT_STATE_META[sprintState(sprints[0])].label}`
-                : 'Belum ada Surat Perintah'
+              sprint ? `${sprint.number} · ${SPRINT_STATE_META[sprintState(sprint)].label}` : 'Belum ada Surat Perintah'
             }
             action={
               // One case, one SPRINT: the way to add one goes once it exists.
               manageSprint &&
-              sprints.length === 0 && (
-                <div className="flex items-center gap-1">
-                  <Tooltip label="Unggah SPRINT bertanda tangan dari luar aplikasi">
-                    <IconButton label="Unggah SPRINT" size={28} onClick={() => setUploading(true)}>
-                      <Upload size={13} />
-                    </IconButton>
-                  </Tooltip>
-                  <Button size="xs" variant="primary" icon={<FilePen size={12} />} onClick={() => setDrafting('new')}>
-                    Buat SPRINT
-                  </Button>
-                </div>
+              !sprint && (
+                <Button size="xs" variant="primary" icon={<FilePen size={12} />} onClick={() => setDrafting('new')}>
+                  Buat SPRINT
+                </Button>
               )
             }
           >
-            {sprints.length === 0 ? (
+            {!sprint ? (
               <div className="rounded-xl border border-dashed border-line-strong bg-abyss/30 px-4 py-5 text-center">
                 <p className="text-[12px] font-medium text-ink-2">Belum ada Surat Perintah</p>
                 <p className="mt-1 text-[11px] leading-relaxed text-ink-4">
-                  Tanpa SPRINT aktif, tidak ada penyidik yang dapat membuka perkara ini. Satu perkara hanya
+                  Tanpa SPRINT aktif, tidak ada investigator yang dapat membuka perkara ini. Satu perkara hanya
                   memiliki satu SPRINT.
                 </p>
                 {manageSprint && (
@@ -238,23 +256,65 @@ export function CaseRegistrationPage() {
             ) : (
               <div className="space-y-2">
                 <SprintListItem
-                  sprint={sprints[0]}
-                  active={sprints[0].id === sprintId}
-                  onSelect={() => select({ kind: 'sprint', id: sprints[0].id })}
+                  sprint={sprint}
+                  active={sprint.id === sprintId}
+                  onSelect={() => select({ kind: 'sprint', id: sprint.id })}
                 />
                 <p className="text-[10.5px] leading-relaxed text-ink-4">
-                  Satu perkara hanya memiliki satu SPRINT. Perubahan tim dilakukan pada surat ini.
+                  Satu perkara hanya memiliki satu SPRINT. Tim diatur di Investigators.
                 </p>
               </div>
             )}
           </Section>
 
-          <AccessList sprints={sprints} users={users} roles={roles} meId={userId} />
+          <Section
+            title="Investigators"
+            icon={<Users size={13} />}
+            summary={
+              !sprint
+                ? 'Ditunjuk lewat SPRINT'
+                : sprint.members.length === 0
+                  ? 'Belum ada investigator'
+                  : `${sprint.members.length} investigator · ${
+                      users.find((u) => u.id === (sprint.members.find((m) => m.position === 'ketua') ?? sprint.members[0]).userId)?.name ?? ''
+                    }`
+            }
+            action={
+              manageSprint &&
+              sprint &&
+              ['active', 'scheduled'].includes(sprintState(sprint)) && (
+                <Button size="xs" variant="ghost" icon={<UserPlus size={11} />} onClick={() => setAddingInvestigator(true)}>
+                  Tambah
+                </Button>
+              )
+            }
+          >
+            {sprint ? (
+              <InvestigatorList
+                sprint={sprint}
+                letter={letter}
+                users={users}
+                editable={manageSprint && ['active', 'scheduled'].includes(sprintState(sprint))}
+              />
+            ) : (
+              <p className="text-[11.5px] text-ink-4">Investigator ditunjuk lewat SPRINT. Buat SPRINT terlebih dahulu.</p>
+            )}
+          </Section>
+
+          <AccessList
+            sprints={sprints}
+            viewerIds={c.viewerIds ?? []}
+            users={users}
+            roles={roles}
+            meId={userId}
+            editable={manageSprint}
+            onChange={saveViewers}
+          />
 
           <DocumentList
             documents={documents}
             openId={docId}
-            notaId={c.reportSource?.notaDinasDocId}
+            notaIds={notaIds}
             onSelect={(id) => select({ kind: 'doc', id })}
             onAdd={addFiles}
             onRemove={removeDoc}
@@ -268,15 +328,19 @@ export function CaseRegistrationPage() {
           <SprintViewer
             key={openSprint.id}
             sprint={openSprint}
-            users={users}
+            letter={letter!}
             manage={manageSprint}
-            caseTitle={c.title}
-            reportSource={c.reportSource}
             onBack={() => select(null)}
             onEditDraft={() => setDrafting(openSprint)}
           />
         ) : openDoc ? (
-          <DocumentViewer key={openDoc.id} doc={openDoc} onBack={() => select(null)} onRemove={() => removeDoc(openDoc)} />
+          <DocumentViewer
+            key={openDoc.id}
+            doc={openDoc}
+            onBack={() => select(null)}
+            onRemove={() => removeDoc(openDoc)}
+            onSaveNote={(note) => saveNote(openDoc, note)}
+          />
         ) : (
           <div className="flex h-full items-center justify-center p-6">
             <EmptyState
@@ -294,19 +358,13 @@ export function CaseRegistrationPage() {
           sprint={drafting === 'new' ? undefined : drafting}
           users={users}
           roles={roles}
-          menimbangHint={menimbangFromSource(c.reportSource, c.title)}
+          menimbangHint={menimbangFromSources(sources, c.title)}
           onClose={() => setDrafting(null)}
           onSaved={(id) => select({ kind: 'sprint', id }, true)}
         />
       )}
-      {uploading && (
-        <UploadSprintModal
-          caseId={caseId}
-          users={users}
-          roles={roles}
-          onClose={() => setUploading(false)}
-          onCreated={(id) => select({ kind: 'sprint', id }, true)}
-        />
+      {addingInvestigator && sprint && (
+        <AddInvestigatorModal sprint={sprint} users={users} onClose={() => setAddingInvestigator(false)} />
       )}
     </div>
   )
@@ -439,26 +497,34 @@ function CaseDetails({ c, assignee }: { c: Case; assignee?: User }) {
 
 /* -------------------------------------------------------- Report source */
 
+/**
+ * Every channel the case was reported through. A case can arrive by more
+ * than one — a WBS report followed by a nota dinas, say — so each source is
+ * its own entry, added, changed or removed independently.
+ */
 function ReportSourceSection({
-  source,
+  sources,
   documents,
   editable,
   recordedBy,
   onOpenDoc,
   onSave,
+  onRemove,
 }: {
-  source?: ReportSource
+  sources: ReportSource[]
   documents: CaseDocument[]
   editable: boolean
   recordedBy?: string
   onOpenDoc: (id: string) => void
   onSave: (src: ReportSource, notaFile: File | null) => Promise<void>
+  onRemove: (src: ReportSource) => Promise<void>
 }) {
-  const [editing, setEditing] = useState(false)
+  /** Id of the source being edited, 'new' while adding one, or null. */
+  const [editing, setEditing] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
-  const edit = () => {
+  const start = (id: string) => {
     setOpen(true)
-    setEditing(true)
+    setEditing(id)
   }
 
   return (
@@ -468,74 +534,134 @@ function ReportSourceSection({
       open={open}
       onOpenChange={setOpen}
       summary={
-        source
-          ? `${SOURCE_META[source.kind].label}${
-              source.kind === 'wbs' ? ` · ${source.wbsNumber}` : source.kind === 'management' ? ` · ${source.notaDinasNumber}` : ''
-            }`
-          : 'Belum dicatat'
+        sources.length === 0
+          ? 'Belum dicatat'
+          : sources
+              .map((src) =>
+                src.kind === 'wbs'
+                  ? `WBS ${src.wbsNumber}`
+                  : src.kind === 'management'
+                    ? `Nota Dinas ${src.notaDinasNumber}`
+                    : 'Internal Report',
+              )
+              .join(' · ')
       }
       action={
         editable &&
-        source &&
-        !editing && (
-          <Button size="xs" variant="ghost" icon={<Pencil size={11} />} onClick={edit}>
-            Ubah
+        editing === null && (
+          <Button size="xs" variant="ghost" icon={<Plus size={11} />} onClick={() => start('new')}>
+            Tambah
           </Button>
         )
       }
     >
-      {editing ? (
-        <ReportSourceForm
-          initial={source}
-          documents={documents}
-          recordedBy={recordedBy}
-          onCancel={() => setEditing(false)}
-          onSave={async (src, file) => {
-            await onSave(src, file)
-            setEditing(false)
-          }}
-        />
-      ) : source ? (
-        <ReportSourceView source={source} documents={documents} onOpenDoc={onOpenDoc} />
-      ) : (
-        <div className="rounded-xl border border-dashed border-line-strong bg-abyss/30 px-4 py-4 text-center">
-          <p className="text-[12px] font-medium text-ink-2">Sumber laporan belum dicatat</p>
-          <p className="mt-1 text-[11px] text-ink-4">WBS, Management Report, atau Internal Report.</p>
-          {editable && (
-            <Button className="mt-3" size="sm" variant="outline" icon={<Radio size={13} />} onClick={edit}>
-              Catat sumber laporan
-            </Button>
-          )}
-        </div>
-      )}
+      <div className="space-y-2">
+        {sources.map((src, i) =>
+          editing === src.id ? (
+            <ReportSourceForm
+              key={src.id}
+              initial={src}
+              documents={documents}
+              recordedBy={recordedBy}
+              onCancel={() => setEditing(null)}
+              onSave={async (next, file) => {
+                await onSave(next, file)
+                setEditing(null)
+              }}
+            />
+          ) : (
+            <ReportSourceView
+              key={src.id}
+              index={i + 1}
+              source={src}
+              documents={documents}
+              onOpenDoc={onOpenDoc}
+              onEdit={editable && editing === null ? () => start(src.id) : undefined}
+              onRemove={
+                editable && editing === null
+                  ? () => {
+                      if (window.confirm(`Hapus sumber laporan ${SOURCE_META[src.kind].label}?`)) void onRemove(src)
+                    }
+                  : undefined
+              }
+            />
+          ),
+        )}
+
+        {editing === 'new' && (
+          <div className="rounded-lg border border-brand/30 bg-brand/5 p-3">
+            <p className="mb-2 text-[11px] font-medium text-ink-2">Sumber laporan baru</p>
+            <ReportSourceForm
+              documents={documents}
+              recordedBy={recordedBy}
+              onCancel={() => setEditing(null)}
+              onSave={async (next, file) => {
+                await onSave(next, file)
+                setEditing(null)
+              }}
+            />
+          </div>
+        )}
+
+        {sources.length === 0 && editing !== 'new' && (
+          <div className="rounded-xl border border-dashed border-line-strong bg-abyss/30 px-4 py-4 text-center">
+            <p className="text-[12px] font-medium text-ink-2">Sumber laporan belum dicatat</p>
+            <p className="mt-1 text-[11px] text-ink-4">WBS, Management Report, atau Internal Report — bisa lebih dari satu.</p>
+            {editable && (
+              <Button className="mt-3" size="sm" variant="outline" icon={<Plus size={13} />} onClick={() => start('new')}>
+                Tambah sumber laporan
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
     </Section>
   )
 }
 
 function ReportSourceView({
+  index,
   source,
   documents,
   onOpenDoc,
+  onEdit,
+  onRemove,
 }: {
+  index: number
   source: ReportSource
   documents: CaseDocument[]
   onOpenDoc: (id: string) => void
+  onEdit?: () => void
+  onRemove?: () => void
 }) {
   const meta = SOURCE_META[source.kind]
   const nota = documents.find((d) => d.id === source.notaDinasDocId)
   return (
-    <div className="rounded-lg border border-line-soft bg-abyss/30 p-3">
+    <div className="group rounded-lg border border-line-soft bg-abyss/30 p-3">
       <div className="flex items-center gap-2.5">
         <span className="tone flex size-8 shrink-0 items-center justify-center rounded-lg border" style={tone(meta.color)}>
           <meta.icon size={15} />
         </span>
-        <div className="min-w-0">
-          <p className="text-[12.5px] font-medium text-ink">{meta.label}</p>
+        <div className="min-w-0 flex-1">
+          <p className="text-[12.5px] font-medium text-ink">
+            <span className="mr-1 text-ink-4 tnum">{index}.</span>
+            {meta.label}
+          </p>
           <p className="text-[10px] text-ink-4">
             Dicatat {source.recordedBy ? `oleh ${source.recordedBy} · ` : ''}
             <span className="tnum">{formatDate(source.recordedAt)}</span>
           </p>
         </div>
+        {onEdit && (
+          <IconButton label="Ubah sumber laporan" size={26} onClick={onEdit}>
+            <Pencil size={12} />
+          </IconButton>
+        )}
+        {onRemove && (
+          <IconButton label="Hapus sumber laporan" size={26} className="hover:text-danger" onClick={onRemove}>
+            <Trash2 size={12} />
+          </IconButton>
+        )}
       </div>
 
       <div className="mt-2.5">
@@ -605,7 +731,12 @@ function ReportSourceForm({
     if (!valid) return
     setSaving(true)
     try {
-      const base = { kind, recordedBy: recordedBy ?? initial?.recordedBy, recordedAt: new Date().toISOString() }
+      const base = {
+        id: initial?.id ?? uid('rs'),
+        kind,
+        recordedBy: initial?.recordedBy ?? recordedBy,
+        recordedAt: initial?.recordedAt ?? new Date().toISOString(),
+      }
       const src: ReportSource =
         kind === 'wbs'
           ? { ...base, wbsNumber: wbsNumber.trim() }
@@ -740,11 +871,9 @@ function ReportSourceForm({
       )}
 
       <div className="flex justify-end gap-2">
-        {initial && (
-          <Button size="sm" variant="ghost" onClick={onCancel}>
-            Batal
-          </Button>
-        )}
+        <Button size="sm" variant="ghost" onClick={onCancel}>
+          Batal
+        </Button>
         <Button size="sm" variant="primary" onClick={save} disabled={!valid} loading={saving}>
           Simpan
         </Button>
@@ -755,7 +884,30 @@ function ReportSourceForm({
 
 /* ------------------------------------------------------------ Access list */
 
-function AccessList({ sprints, users, roles, meId }: { sprints: Sprint[]; users: User[]; roles: Role[]; meId: string }) {
+/**
+ * Who can open the case, by the three routes that grant it: the SPRINT team
+ * (managed under Investigators), people added here by hand, and roles that
+ * see every case. Only the middle group is edited here.
+ */
+function AccessList({
+  sprints,
+  viewerIds,
+  users,
+  roles,
+  meId,
+  editable,
+  onChange,
+}: {
+  sprints: Sprint[]
+  viewerIds: string[]
+  users: User[]
+  roles: Role[]
+  meId: string
+  editable: boolean
+  onChange: (next: string[]) => Promise<void>
+}) {
+  const [picking, setPicking] = useState('')
+
   const viaSprint = useMemo(() => {
     const ids = new Set<string>()
     for (const s of sprints) {
@@ -765,53 +917,117 @@ function AccessList({ sprints, users, roles, meId }: { sprints: Sprint[]; users:
     return [...ids].map((id) => users.find((u) => u.id === id)).filter((u): u is User => !!u)
   }, [sprints, users])
 
-  const viaRole = useMemo(
-    () =>
-      users.filter(
-        (u) => u.active && !viaSprint.some((v) => v.id === u.id) && can(roles.find((r) => r.id === u.role), 'case.viewAll'),
-      ),
-    [users, roles, viaSprint],
+  const viewAll = (u: User) => can(roles.find((r) => r.id === u.role), 'case.viewAll')
+  const added = viewerIds.map((id) => users.find((u) => u.id === id)).filter((u): u is User => !!u)
+  const viaRole = users.filter((u) => u.active && viewAll(u) && !viaSprint.some((v) => v.id === u.id))
+  // Anyone who doesn't already reach the case some other way.
+  const candidates = users.filter(
+    (u) => u.active && !viewAll(u) && !viaSprint.some((v) => v.id === u.id) && !viewerIds.includes(u.id),
   )
 
-  const chip = (u: User, byRole: boolean) => {
+  const chip = (u: User, tone: 'sprint' | 'added' | 'role', onRemove?: () => void) => {
     const role = roles.find((r) => r.id === u.role)
-    const mine = u.id === meId
     return (
-      <Tooltip key={u.id} label={byRole ? `${role?.name ?? 'Peran'} · melihat semua perkara` : (role?.name ?? 'Peran')}>
+      <Tooltip
+        key={u.id}
+        label={tone === 'role' ? `${role?.name ?? 'Peran'} · melihat semua perkara` : (role?.name ?? 'Peran')}
+      >
         <span
           className={cn(
-            'flex items-center gap-2 rounded-full border py-1 pl-1 pr-2.5',
-            byRole ? 'border-line bg-abyss/40' : 'border-brand/35 bg-brand/8',
+            'flex items-center gap-2 rounded-full border py-1 pl-1',
+            onRemove ? 'pr-1' : 'pr-2.5',
+            tone === 'sprint' ? 'border-brand/35 bg-brand/8' : tone === 'added' ? 'border-ok/35 bg-ok/8' : 'border-line bg-abyss/40',
           )}
         >
           <Avatar src={u.avatar} name={u.name} size={20} />
           <span className="text-[11.5px] text-ink-2">
             {u.name}
-            {mine && <span className="ml-1 text-[10px] text-ink-4">(anda)</span>}
+            {u.id === meId && <span className="ml-1 text-[10px] text-ink-4">(anda)</span>}
           </span>
+          {onRemove && (
+            <IconButton label={`Cabut akses ${u.name}`} size={20} className="hover:text-danger" onClick={onRemove}>
+              <X size={10} />
+            </IconButton>
+          )}
         </span>
       </Tooltip>
     )
   }
 
+  const total = new Set([...viaSprint, ...added, ...viaRole].map((u) => u.id)).size
+
   return (
     <Section
       title="Siapa yang boleh melihat"
       icon={<KeyRound size={13} />}
-      summary={`${viaSprint.length} lewat SPRINT · ${viaRole.length} lewat peran`}
+      summary={`${total} orang · ${viaSprint.length} lewat SPRINT · ${added.length} ditambahkan · ${viaRole.length} lewat peran`}
     >
       <div className="space-y-3.5">
         <div>
           <p className="mb-2 flex items-center gap-1.5 text-[10.5px] font-medium text-ink-3">
-            <ShieldCheck size={11} className="text-brand-bright" /> Ditunjuk pada SPRINT aktif
+            <ShieldCheck size={11} className="text-brand-bright" /> Investigator pada SPRINT aktif
           </p>
           <div className="flex flex-wrap gap-2">
             {viaSprint.length === 0 ? (
-              <p className="text-[11.5px] text-ink-4">Belum ada — tidak ada surat perintah aktif yang menunjuk penyidik.</p>
+              <p className="text-[11.5px] text-ink-4">Belum ada — atur lewat Investigators.</p>
             ) : (
-              viaSprint.map((u) => chip(u, false))
+              viaSprint.map((u) => chip(u, 'sprint'))
             )}
           </div>
+        </div>
+
+        <div>
+          <p className="mb-2 flex items-center gap-1.5 text-[10.5px] font-medium text-ink-3">
+            <UserPlus size={11} className="text-ok" /> Ditambahkan ke perkara ini
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {added.length === 0 ? (
+              <p className="text-[11.5px] text-ink-4">Tidak ada.</p>
+            ) : (
+              added.map((u) =>
+                chip(
+                  u,
+                  'added',
+                  editable
+                    ? () => {
+                        void onChange(viewerIds.filter((id) => id !== u.id))
+                        toast.success('Akses dicabut', `${u.name} tidak lagi dapat membuka perkara ini.`)
+                      }
+                    : undefined,
+                ),
+              )
+            )}
+          </div>
+          {editable && candidates.length > 0 && (
+            <div className="mt-2 flex gap-2">
+              <div className="min-w-0 flex-1">
+                <Select
+                  aria-label="Tambah orang"
+                  className="h-8 text-[12px]"
+                  value={picking}
+                  onChange={(e) => setPicking(e.target.value)}
+                  options={[
+                    { value: '', label: '— Pilih orang —' },
+                    ...candidates.map((u) => ({ value: u.id, label: `${u.name} · ${roles.find((r) => r.id === u.role)?.name ?? u.title}` })),
+                  ]}
+                />
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                icon={<UserPlus size={12} />}
+                disabled={!picking}
+                onClick={async () => {
+                  const u = users.find((x) => x.id === picking)
+                  await onChange([...viewerIds, picking])
+                  setPicking('')
+                  toast.success('Akses diberikan', `${u?.name} kini dapat membuka perkara ini.`)
+                }}
+              >
+                Tambah
+              </Button>
+            </div>
+          )}
         </div>
 
         <div>
@@ -819,8 +1035,9 @@ function AccessList({ sprints, users, roles, meId }: { sprints: Sprint[]; users:
             <Users size={11} /> Berdasarkan peran — melihat semua perkara
           </p>
           <div className="flex flex-wrap gap-2">
-            {viaRole.length === 0 ? <p className="text-[11.5px] text-ink-4">Tidak ada.</p> : viaRole.map((u) => chip(u, true))}
+            {viaRole.length === 0 ? <p className="text-[11.5px] text-ink-4">Tidak ada.</p> : viaRole.map((u) => chip(u, 'role'))}
           </div>
+          {editable && <p className="mt-1.5 text-[10.5px] text-ink-4">Diatur lewat peran di Admin → User Role Setting.</p>}
         </div>
       </div>
     </Section>
@@ -832,14 +1049,14 @@ function AccessList({ sprints, users, roles, meId }: { sprints: Sprint[]; users:
 function DocumentList({
   documents,
   openId,
-  notaId,
+  notaIds,
   onSelect,
   onAdd,
   onRemove,
 }: {
   documents: CaseDocument[]
   openId: string | null
-  notaId?: string
+  notaIds: Set<string>
   onSelect: (id: string) => void
   onAdd: (list: FileList | null) => void
   onRemove: (doc: CaseDocument) => void
@@ -919,9 +1136,10 @@ function DocumentList({
                             {d.category}
                           </span>
                         )}
-                        {d.id === notaId && <span className="text-brand-bright">sumber laporan</span>}
+                        {notaIds.has(d.id) && <span className="text-brand-bright">sumber laporan</span>}
                         {d.size !== undefined && <span className="tnum">{formatBytes(d.size)}</span>}
                       </span>
+                      {d.note && <span className="mt-1 line-clamp-2 block text-[11px] leading-snug text-ink-3">{d.note}</span>}
                     </span>
                   </button>
                   <IconButton
@@ -944,7 +1162,19 @@ function DocumentList({
 
 /* -------------------------------------------------------- Document viewer */
 
-function DocumentViewer({ doc, onBack, onRemove }: { doc: CaseDocument; onBack: () => void; onRemove: () => void }) {
+function DocumentViewer({
+  doc,
+  onBack,
+  onRemove,
+  onSaveNote,
+}: {
+  doc: CaseDocument
+  onBack: () => void
+  onRemove: () => void
+  onSaveNote: (note: string) => Promise<void>
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(doc.note ?? '')
   const color = categoryColor(doc.category)
   const Icon = docIcon(doc.mime)
 
@@ -979,11 +1209,55 @@ function DocumentViewer({ doc, onBack, onRemove }: { doc: CaseDocument; onBack: 
         </Tooltip>
       </header>
 
-      {doc.note && (
-        <p className="shrink-0 border-b border-line-soft bg-abyss/25 px-4 py-2 text-[11.5px] italic leading-relaxed text-ink-3">
-          {doc.note}
-        </p>
-      )}
+      {/* Description — why this document grounds the investigation */}
+      <div className="shrink-0 border-b border-line-soft bg-abyss/25 px-4 py-2.5">
+        {editing ? (
+          <div className="space-y-2">
+            <Textarea
+              autoFocus
+              rows={3}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="Deskripsi dokumen — isi singkat dan kaitannya dengan investigasi."
+              className="text-[12px]"
+            />
+            <div className="flex justify-end gap-2">
+              <Button
+                size="xs"
+                variant="ghost"
+                onClick={() => {
+                  setDraft(doc.note ?? '')
+                  setEditing(false)
+                }}
+              >
+                Batal
+              </Button>
+              <Button
+                size="xs"
+                variant="primary"
+                onClick={async () => {
+                  await onSaveNote(draft.trim())
+                  setEditing(false)
+                }}
+              >
+                Simpan deskripsi
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <p className="text-[10.5px] font-medium uppercase tracking-[0.06em] text-ink-4">Deskripsi</p>
+              <p className={cn('mt-0.5 whitespace-pre-wrap text-[12px] leading-relaxed', doc.note ? 'text-ink-2' : 'italic text-ink-4')}>
+                {doc.note || 'Belum ada deskripsi.'}
+              </p>
+            </div>
+            <Button size="xs" variant="ghost" icon={<Pencil size={11} />} onClick={() => setEditing(true)}>
+              {doc.note ? 'Ubah' : 'Tambah'}
+            </Button>
+          </div>
+        )}
+      </div>
 
       <div className="min-h-0 flex-1 overflow-auto bg-abyss/20 p-4">
         <BlobPreview blobId={doc.blobId} mime={doc.mime} name={doc.name} size={doc.size} />

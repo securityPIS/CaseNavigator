@@ -20,6 +20,7 @@ import type {
   QuestionSet,
   Recommendation,
   Report,
+  ReportSource,
   Role,
   Slide,
   Sprint,
@@ -265,6 +266,24 @@ class CaseNavigatorDB extends Dexie {
             await tx.table('sprints').delete(extra.id)
           }
         }
+      })
+
+    /**
+     * v8 — a case can be reported through several channels, so its single
+     * sumber laporan becomes the first entry of a list.
+     */
+    this.version(8)
+      .stores({
+        cases: 'id, code, status, priority, assigneeId, updatedAt',
+      })
+      .upgrade(async (tx) => {
+        await tx
+          .table('cases')
+          .toCollection()
+          .modify((c: Case & { reportSource?: Omit<ReportSource, 'id'> }) => {
+            if (c.reportSource && !c.reportSources) c.reportSources = [{ id: `rs-${c.id}-1`, ...c.reportSource }]
+            delete c.reportSource
+          })
       })
   }
 }

@@ -222,22 +222,33 @@ const CASES: Case[] = [
 /* ---------------------------------------------------- Sumber laporan */
 
 /** How each case was reported — one of every channel across the set. */
-const REPORT_SOURCES: Record<string, ReportSource> = {
-  'c-014': {
-    kind: 'management', notaDinasNumber: '041/PIS0400/2026-S0', notaDinasDocId: 'cd-014-4',
-    recordedBy: 'Elena Vos', recordedAt: iso(94, 12, 5),
-  },
-  'c-011': {
-    kind: 'internal', recordedBy: 'Ryan Kowalski', recordedAt: iso(61, 9, 15),
-    notes: 'Selisih 14 palet antara manifes keluar dan penerimaan di gudang Northbridge pada rekonsiliasi mingguan. Pola berulang tiga minggu berturut-turut pada shift malam yang sama.',
-  },
-  'c-009': {
-    kind: 'internal', recordedBy: 'Amara Osei', recordedAt: iso(120, 9, 15),
-    notes: 'Kontrol otomatis menandai kuitansi reimbursement dengan nomor dan nominal identik yang diajukan oleh dua pekerja berbeda.',
-  },
-  'c-006': { kind: 'wbs', wbsNumber: 'WBS-2026-0117', recordedBy: 'Jason Bennett', recordedAt: iso(146, 9, 15) },
-  'c-003': { kind: 'wbs', wbsNumber: 'WBS-2025-0942', recordedBy: 'Ryan Kowalski', recordedAt: iso(198, 9, 15) },
+const REPORT_SOURCES: Record<string, ReportSource[]> = {
+  'c-014': [
+    {
+      id: 'rs-014-1', kind: 'wbs', wbsNumber: 'WBS-2026-0088',
+      recordedBy: 'Elena Vos', recordedAt: iso(95, 9, 30),
+    },
+    {
+      id: 'rs-014-2', kind: 'management', notaDinasNumber: '041/PIS0400/2026-S0', notaDinasDocId: 'cd-014-4',
+      recordedBy: 'Elena Vos', recordedAt: iso(94, 12, 5),
+    },
+  ],
+  'c-011': [
+    {
+      id: 'rs-011-1', kind: 'internal', recordedBy: 'Ryan Kowalski', recordedAt: iso(61, 9, 15),
+      notes: 'Selisih 14 palet antara manifes keluar dan penerimaan di gudang Northbridge pada rekonsiliasi mingguan. Pola berulang tiga minggu berturut-turut pada shift malam yang sama.',
+    },
+  ],
+  'c-009': [
+    {
+      id: 'rs-009-1', kind: 'internal', recordedBy: 'Amara Osei', recordedAt: iso(120, 9, 15),
+      notes: 'Kontrol otomatis menandai kuitansi reimbursement dengan nomor dan nominal identik yang diajukan oleh dua pekerja berbeda.',
+    },
+  ],
+  'c-006': [{ id: 'rs-006-1', kind: 'wbs', wbsNumber: 'WBS-2026-0117', recordedBy: 'Jason Bennett', recordedAt: iso(146, 9, 15) }],
+  'c-003': [{ id: 'rs-003-1', kind: 'wbs', wbsNumber: 'WBS-2025-0942', recordedBy: 'Ryan Kowalski', recordedAt: iso(198, 9, 15) }],
 }
+
 
 /* ------------------------------------------------ Registration documents */
 
@@ -1814,7 +1825,7 @@ export async function seedDatabase(force = false): Promise<void> {
     const letter = letterFromSprint(s, {
       users: USERS,
       caseTitle: CASES.find((c) => c.id === s.caseId)?.title,
-      reportSource: REPORT_SOURCES[s.caseId],
+      reportSources: REPORT_SOURCES[s.caseId],
     })
     return { ...s, docSize: data.size, letter }
   })
@@ -1829,7 +1840,7 @@ export async function seedDatabase(force = false): Promise<void> {
       if (d.blobId) caseDocs.push({ id: d.blobId, data })
       return { ...d, size: data.size }
     })
-    return { ...c, documents, reportSource: REPORT_SOURCES[c.id] }
+    return { ...c, documents, reportSources: REPORT_SOURCES[c.id] }
   })
 
   await db.transaction(
