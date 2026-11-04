@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
   ChevronDown,
@@ -22,7 +23,7 @@ import { cn, relativeTime, uid } from '@/lib/utils'
 import { Badge, Button, Card, EmptyState, IconButton, Input, tone } from '@/components/ui/primitives'
 import { Modal } from '@/components/ui/Modal'
 import { AdminShell } from './AdminShell'
-import { SprintTemplateEditor } from './SprintTemplateEditor'
+import { createSprintTemplate } from './SprintTemplateEditorPage'
 import { Field } from '@/pages/CasesPage'
 import { toast } from '@/stores/toast'
 
@@ -45,6 +46,15 @@ export function TemplatePage() {
   const [kind, setKind] = useState<TemplateKind>('report')
   const [editing, setEditing] = useState<Template | null>(null)
   const [newOpen, setNewOpen] = useState(false)
+  const navigate = useNavigate()
+
+  // Surat Perintah templates are documents, edited full-page like the LHI.
+  const openEditor = (t: Template) =>
+    t.kind === 'sprint' ? navigate(`/admin/templates/sprint/${t.id}`) : setEditing(t)
+  const startNew = async () => {
+    if (kind === 'sprint') navigate(`/admin/templates/sprint/${await createSprintTemplate()}`)
+    else setNewOpen(true)
+  }
 
   const filtered = templates.filter((t) => t.kind === kind)
   const meta = KINDS.find((k) => k.id === kind)!
@@ -61,7 +71,7 @@ export function TemplatePage() {
       title="Template Customization"
       description="Templates set the starting structure for new reports, decks, mail, evidence labels and Surat Perintah. Changing one does not affect documents already created from it."
       actions={
-        <Button variant="primary" icon={<Plus size={13} />} onClick={() => setNewOpen(true)}>
+        <Button variant="primary" icon={<Plus size={13} />} onClick={startNew}>
           New template
         </Button>
       }
@@ -101,7 +111,7 @@ export function TemplatePage() {
             title={`No ${meta.label.toLowerCase()} templates`}
             description="Create one to give your team a consistent starting point."
             action={
-              <Button variant="primary" icon={<Plus size={14} />} onClick={() => setNewOpen(true)}>
+              <Button variant="primary" icon={<Plus size={14} />} onClick={startNew}>
                 New template
               </Button>
             }
@@ -167,7 +177,7 @@ export function TemplatePage() {
                   >
                     <Copy size={12} />
                   </IconButton>
-                  <IconButton label="Edit" size={24} onClick={() => setEditing(t)}>
+                  <IconButton label="Edit" size={24} onClick={() => openEditor(t)}>
                     <LayoutTemplate size={12} />
                   </IconButton>
                   <IconButton
@@ -192,18 +202,8 @@ export function TemplatePage() {
         </div>
       )}
 
-      {editing &&
-        (editing.kind === 'sprint' ? (
-          <SprintTemplateEditor template={editing} onClose={() => setEditing(null)} />
-        ) : (
-          <TemplateEditor template={editing} onClose={() => setEditing(null)} />
-        ))}
-      {newOpen &&
-        (kind === 'sprint' ? (
-          <SprintTemplateEditor onClose={() => setNewOpen(false)} />
-        ) : (
-          <TemplateEditor kind={kind} onClose={() => setNewOpen(false)} />
-        ))}
+      {editing && <TemplateEditor template={editing} onClose={() => setEditing(null)} />}
+      {newOpen && <TemplateEditor kind={kind} onClose={() => setNewOpen(false)} />}
     </AdminShell>
   )
 }

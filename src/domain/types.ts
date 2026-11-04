@@ -354,37 +354,25 @@ export interface SprintTeamRole {
 }
 
 /**
- * The fixed, organisation-wide wording of a Surat Perintah. Text may carry
- * placeholders resolved at render time: {{jabatan_penerbit}}, {{perihal}}.
+ * A Surat Perintah template: the letter itself as an editable document, plus
+ * the few settings the document can't express.
+ *
+ * `html` is written in the Word-like template editor. Everything typed there
+ * is fixed wording; the parts each order fills in are field chips —
+ * `<span data-field="perihal">` and so on (see SPRINT_FIELDS in
+ * domain/sprintLetter.ts) — replaced with the form's values when the letter
+ * is rendered.
  */
 export interface SprintTemplateBody {
-  /** Small reference printed top-left, e.g. "Lampiran 5-TKO No. …". */
-  lampiranCode: string
-  /** Heading beside the logo, e.g. "SURAT PERINTAH INVESTIGASI". */
-  headerTitle: string
-  /** Centred letter title, e.g. "SURAT PERINTAH". */
-  letterTitle: string
-  /** Number pattern; {urut} and {tahun} are filled from the form. */
+  html: string
+  /** Number pattern behind the {nomor} field; {urut} and {tahun} come from
+      the form. */
   numberPattern: string
-  /** The line under "TENTANG", e.g. "PELAKSANAAN INVESTIGASI". */
-  tentang: string
-  /** Office issuing the order, e.g. "VP HSSE". */
-  issuerTitle: string
-  /** Standing considerations printed after the case-specific ones. */
-  menimbangFixed: string[]
-  /** Default legal basis — copied into each letter, where it can be edited. */
-  dasar: string[]
-  kepada: string
-  untukIntro: string
-  /** Lead-in for the case-specific task, e.g. "Melakukan kegiatan investigasi
-      terkait dengan". The form supplies the rest. */
-  untukObjekPrefix: string
-  /** Standing tasks printed after the case-specific ones. */
-  untukFixed: string[]
-  /** Closing lines under the order. */
-  penutup: string[]
+  /** Pre-filled into the form's "Ditetapkan di". */
   defaultPlace: string
-  lampiranTitle: string
+  /** Pre-filled into the form's "Jabatan penandatangan". */
+  issuerTitle: string
+  /** Roles on the team attachment, in order. */
   roles: SprintTeamRole[]
 }
 
@@ -406,8 +394,8 @@ export interface SprintTeamEntry {
 export interface SprintLetter {
   templateId: string
   templateName: string
-  /** Copy of the template wording at the time of drafting, so editing the
-      template never changes an order already written from it. */
+  /** Copy of the template at the time of drafting, so editing the template
+      never changes an order already written from it. */
   body: SprintTemplateBody
   /** Fills {urut} in the number pattern. */
   seq: string
@@ -419,9 +407,9 @@ export interface SprintLetter {
   menimbang: string
   /** Further case-specific considerations. */
   menimbangExtra: string[]
-  /** Legal basis — starts as the template's list. */
-  dasar: string[]
-  /** What is investigated — completes the template's objek prefix. */
+  /** Legal basis added for this case, after the template's own. */
+  dasarExtra: string[]
+  /** What is investigated. */
   objek: string
   /** Further case-specific tasks. */
   untukExtra: string[]
