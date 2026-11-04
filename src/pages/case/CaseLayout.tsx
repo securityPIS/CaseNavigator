@@ -14,7 +14,6 @@ import {
   Presentation,
   Shapes,
   ShieldAlert,
-  ScrollText,
 } from 'lucide-react'
 import { db } from '@/domain/db'
 import { canAccessCase } from '@/domain/access'
@@ -27,7 +26,6 @@ const TABS = [
   { to: 'registration', label: 'Case Registration', icon: ClipboardList, count: (c: Counts) => c.documents },
   { to: 'graph', label: 'Board', icon: Shapes, count: (c: Counts) => c.nodes },
   { to: 'gelar', label: 'Gelar Perkara', icon: Gavel, count: (c: Counts) => c.gelar },
-  { to: 'sprint', label: 'SPRINT', icon: ScrollText, count: (c: Counts) => c.sprints },
   { to: 'interview', label: 'Interview', icon: MessageSquareQuote, count: (c: Counts) => c.baps },
   { to: 'evidence', label: 'Evidence', icon: Boxes, count: (c: Counts) => c.evidence },
   { to: 'challenge', label: 'Challenge Session', icon: Presentation, count: (c: Counts) => c.slides },
@@ -41,7 +39,6 @@ interface Counts {
   evidence: number
   slides: number
   recs: number
-  sprints: number
   baps: number
   gelar: number
 }
@@ -66,12 +63,11 @@ export function CaseLayout() {
       evidence: await db.evidence.where('caseId').equals(caseId).count(),
       slides: await db.slides.where('caseId').equals(caseId).count(),
       recs: await db.recommendations.where('caseId').equals(caseId).count(),
-      sprints: await db.sprints.where('caseId').equals(caseId).count(),
       baps: await db.baps.where('caseId').equals(caseId).count(),
       gelar: await db.gelarPerkara.where('caseId').equals(caseId).count(),
     }),
     [caseId],
-    { nodes: 0, documents: 0, evidence: 0, slides: 0, recs: 0, sprints: 0, baps: 0, gelar: 0 },
+    { nodes: 0, documents: 0, evidence: 0, slides: 0, recs: 0, baps: 0, gelar: 0 },
   )
 
   if (c === undefined || access === undefined) return <PageSpinner />

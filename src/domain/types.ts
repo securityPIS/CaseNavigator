@@ -48,6 +48,31 @@ export interface Case {
    * recorded line has no blobId.
    */
   documents?: CaseDocument[]
+  /** Where the report that opened the case came from. */
+  reportSource?: ReportSource
+}
+
+/**
+ * Sumber laporan — the channel the case was reported through:
+ *  - wbs        — Whistle Blower System, identified by its WBS number.
+ *  - management — Management Report, a nota dinas with its number and scan.
+ *  - internal   — Internal Report: the team's own investigation notes, which
+ *                 carry no number.
+ */
+export type ReportSourceKind = 'wbs' | 'management' | 'internal'
+
+export interface ReportSource {
+  kind: ReportSourceKind
+  /** WBS only. */
+  wbsNumber?: string
+  /** Management Report only — nomor nota dinas. */
+  notaDinasNumber?: string
+  /** Management Report only — the CaseDocument holding the nota dinas. */
+  notaDinasDocId?: string
+  /** Internal Report only — Investigation Notes. */
+  notes?: string
+  recordedBy?: string
+  recordedAt: string
 }
 
 /** One registration document filed against a case. */
