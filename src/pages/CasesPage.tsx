@@ -5,9 +5,10 @@ import {
   ArrowUpRight,
   Boxes,
   CalendarClock,
+  Clock,
+  FilePen,
   FolderKanban,
   LayoutGrid,
-  Plus,
   Rows3,
   ScrollText,
   Search,
@@ -15,21 +16,13 @@ import {
   SlidersHorizontal,
 } from 'lucide-react'
 import { db } from '@/domain/db'
+import { can } from '@/domain/access'
 import type { Case, CasePriority, CaseStatus } from '@/domain/types'
-import { uid } from '@/lib/utils'
-import {
-  cn,
-  daysUntil,
-  formatDate,
-  PRIORITY_META,
-  relativeTime,
-  STATUS_META,
-} from '@/lib/utils'
-import { Avatar, Badge, Button, Card, EmptyState, Input, Progress, Select, tone } from '@/components/ui/primitives'
-import { Modal } from '@/components/ui/Modal'
-import { Textarea } from '@/components/ui/primitives'
+import { cn, daysUntil, formatDate, formatDateTime, PRIORITY_META, relativeTime, STATUS_META } from '@/lib/utils'
+import { Avatar, Badge, Button, Card, EmptyState, Input, Select, tone } from '@/components/ui/primitives'
 import { useVisibleCases } from '@/hooks/useAccess'
-import { toast } from '@/stores/toast'
+import { useSession } from '@/stores/session'
+import { SprintLetterModal } from '@/pages/case/SprintLetterModal'
 
 type View = 'grid' | 'table'
 
@@ -43,6 +36,12 @@ export function CasesPage() {
   // Only the cases this user's SPRINT assignments (or role) reach.
   const cases = useVisibleCases() ?? []
   const users = useLiveQuery(() => db.users.toArray(), [], [])
+  const roles = useLiveQuery(() => db.roles.toArray(), [], [])
+  const userId = useSession((s) => s.userId)
+  const navigate = useNavigate()
+  const myRole = roles.find((r) => r.id === users.find((u) => u.id === userId)?.role)
+  // A case begins with its SPRINT, so opening one takes both rights.
+  const canOpen = can(myRole, 'case.create') && can(myRole, 'sprint.manage')
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -85,9 +84,11 @@ export function CasesPage() {
               <span className="text-ink-4 tnum">{stats.closed}</span> closed
             </p>
           </div>
-          <Button variant="primary" icon={<Plus size={15} />} onClick={() => setNewOpen(true)}>
-            New Case
-          </Button>
+          {canOpen && (
+            <Button variant="primary" icon={<FilePen size={15} />} onClick={() => setNewOpen(true)}>
+              Buat SPRINT
+            </Button>
+          )}
         </header>
 
         {/* Filters */}
@@ -206,7 +207,14 @@ export function CasesPage() {
         )}
       </div>
 
-      <NewCaseModal open={newOpen} onClose={() => setNewOpen(false)} />
+      {newOpen && (
+        <SprintLetterModal
+          users={users}
+          roles={roles}
+          onClose={() => setNewOpen(false)}
+          onSaved={(sprintId, caseId) => navigate(`/cases/${caseId}/registration?sprint=${sprintId}`)}
+        />
+      )}
     </div>
   )
 }
@@ -281,11 +289,14 @@ function CaseCard({ c, users, i }: { c: Case; users: { id: string; name: string;
       </div>
 
       <div className="mt-auto pt-4">
-        <div className="mb-2 flex items-center justify-between">
-          <span className="text-[10.5px] text-ink-4">Progress</span>
-          <span className="text-[11px] font-medium text-ink-2 tnum">{c.progress}%</span>
+        <div className="flex items-center justify-between gap-2 rounded-lg border border-line-soft bg-abyss/30 px-2.5 py-1.5">
+          <span className="flex items-center gap-1.5 text-[10.5px] text-ink-4">
+            <Clock size={11} /> Last update
+          </span>
+          <span className="text-[11px] text-ink-2 tnum" title={formatDateTime(c.updatedAt)}>
+            {formatDateTime(c.updatedAt)}
+          </span>
         </div>
-        <Progress value={c.progress} color={priority.color} />
       </div>
 
       <div className="mt-3.5 flex items-center justify-between border-t border-line-soft pt-3">
@@ -299,8 +310,7 @@ function CaseCard({ c, users, i }: { c: Case; users: { id: string; name: string;
             </span>
           )}
         </div>
-        <span className="text-[10.5px] text-ink-4">{relativeTime(c.updatedAt)}</span>
-        <span className="sr-only">Lead: {assignee?.name}</span>
+        <span className="truncate text-[10.5px] text-ink-4">{assignee?.name}</span>
       </div>
     </Card>
   )
@@ -320,9 +330,8 @@ function CaseTable({ cases, users }: { cases: Case[]; users: { id: string; name:
               <th className="px-4 py-3 font-semibold">Status</th>
               <th className="px-4 py-3 font-semibold">Priority</th>
               <th className="px-4 py-3 font-semibold">Lead</th>
-              <th className="w-[160px] px-4 py-3 font-semibold">Progress</th>
               <th className="px-4 py-3 font-semibold">Due</th>
-              <th className="px-4 py-3 font-semibold">Updated</th>
+              <th className="px-4 py-3 font-semibold">Last update</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line-soft/70">
@@ -370,12 +379,6 @@ function CaseTable({ cases, users }: { cases: Case[]; users: { id: string; name:
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <Progress value={c.progress} className="flex-1" color={priority.color} />
-                      <span className="w-8 text-right text-[11px] text-ink-3 tnum">{c.progress}%</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
                     {due === null ? (
                       <span className="text-[12px] text-ink-4">—</span>
                     ) : (
@@ -384,7 +387,10 @@ function CaseTable({ cases, users }: { cases: Case[]; users: { id: string; name:
                       </span>
                     )}
                   </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-[11.5px] text-ink-4">{relativeTime(c.updatedAt)}</td>
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <span className="block text-[12px] text-ink-2 tnum">{formatDateTime(c.updatedAt)}</span>
+                    <span className="block text-[10.5px] text-ink-4">{relativeTime(c.updatedAt)}</span>
+                  </td>
                 </tr>
               )
             })}
@@ -392,202 +398,6 @@ function CaseTable({ cases, users }: { cases: Case[]; users: { id: string; name:
         </table>
       </div>
     </Card>
-  )
-}
-
-/* -------------------------------------------------------------- New case */
-
-const JURISDICTIONS = [
-  'Internal — Corporate Ethics',
-  'Internal — Legal Hold',
-  'Internal — IT Security',
-  'Regional — Law Enforcement Liaison',
-]
-
-function NewCaseModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [title, setTitle] = useState('')
-  const [summary, setSummary] = useState('')
-  const [priority, setPriority] = useState<CasePriority>('medium')
-  const [status, setStatus] = useState<CaseStatus>('pending')
-  const [caseType, setCaseType] = useState('Financial Misconduct')
-  const [jurisdiction, setJurisdiction] = useState(JURISDICTIONS[0])
-  const [assigneeId, setAssigneeId] = useState('u-jason')
-  const [dueDate, setDueDate] = useState('')
-  const [tags, setTags] = useState('')
-  const [saving, setSaving] = useState(false)
-  const navigate = useNavigate()
-
-  const users = useLiveQuery(() => db.users.toArray(), [], [])
-  const activeUsers = users.filter((u) => u.active)
-
-  const reset = () => {
-    setTitle('')
-    setSummary('')
-    setPriority('medium')
-    setStatus('pending')
-    setCaseType('Financial Misconduct')
-    setJurisdiction(JURISDICTIONS[0])
-    setAssigneeId('u-jason')
-    setDueDate('')
-    setTags('')
-  }
-
-  const create = async () => {
-    if (!title.trim()) return
-    setSaving(true)
-    try {
-      const settings = await db.settings.get('settings')
-      const count = await db.cases.count()
-      const id = uid('case')
-      const code = `${settings?.caseCodePrefix ?? 'CN'}-${new Date().getFullYear()}-${String(count + 1).padStart(3, '0')}`
-      const now = new Date().toISOString()
-      const tagList = tags.split(',').map((t) => t.trim()).filter(Boolean)
-
-      await db.cases.add({
-        id,
-        code,
-        title: title.trim(),
-        summary: summary.trim() || 'No summary recorded yet.',
-        priority,
-        status,
-        progress: 0,
-        assigneeId,
-        teamIds: [assigneeId],
-        tags: tagList,
-        openedAt: now,
-        dueAt: dueDate ? new Date(dueDate).toISOString() : undefined,
-        updatedAt: now,
-        caseType,
-        jurisdiction,
-      })
-      await db.activities.add({
-        id: uid('ac'),
-        caseId: id,
-        actorId: assigneeId,
-        verb: 'opened',
-        object: code,
-        at: now,
-        kind: 'case',
-      })
-
-      toast.success('Case created', `${code} is ready. Start by adding entities to the graph.`)
-      reset()
-      onClose()
-      navigate(`/cases/${id}/graph`)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Open a new case"
-      description="A case starts empty. You can add entities, evidence and mail once it exists."
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="primary" onClick={create} loading={saving} disabled={!title.trim()}>
-            Create case
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        <Field label="Case title" required>
-          <Input
-            autoFocus
-            placeholder="e.g. Procurement Irregularity Investigation"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-          />
-        </Field>
-
-        <Field label="Summary" hint="What triggered this case? Record it in the reporter's words where you can.">
-          <Textarea
-            rows={4}
-            placeholder="Anonymous ethics-line report alleging…"
-            value={summary}
-            onChange={(e) => setSummary(e.target.value)}
-          />
-        </Field>
-
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Priority">
-            <Select
-              value={priority}
-              onChange={(e) => setPriority(e.target.value as CasePriority)}
-              options={[
-                { value: 'low', label: 'Low' },
-                { value: 'medium', label: 'Medium' },
-                { value: 'high', label: 'High' },
-                { value: 'critical', label: 'Critical' },
-              ]}
-            />
-          </Field>
-          <Field label="Status">
-            <Select
-              value={status}
-              onChange={(e) => setStatus(e.target.value as CaseStatus)}
-              options={[
-                { value: 'active', label: 'Active' },
-                { value: 'pending', label: 'Pending' },
-                { value: 'review', label: 'In Review' },
-                { value: 'closed', label: 'Closed' },
-                { value: 'archived', label: 'Archived' },
-              ]}
-            />
-          </Field>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Case type">
-            <Select
-              value={caseType}
-              onChange={(e) => setCaseType(e.target.value)}
-              options={[
-                { value: 'Financial Misconduct', label: 'Financial Misconduct' },
-                { value: 'Asset Loss', label: 'Asset Loss' },
-                { value: 'Information Security', label: 'Information Security' },
-                { value: 'Competition', label: 'Competition' },
-                { value: 'Workplace Conduct', label: 'Workplace Conduct' },
-              ]}
-            />
-          </Field>
-          <Field label="Jurisdiction">
-            <Select
-              value={jurisdiction}
-              onChange={(e) => setJurisdiction(e.target.value)}
-              options={JURISDICTIONS.map((j) => ({ value: j, label: j }))}
-            />
-          </Field>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Investigator">
-            <Select
-              value={assigneeId}
-              onChange={(e) => setAssigneeId(e.target.value)}
-              options={activeUsers.map((u) => ({ value: u.id, label: u.name }))}
-            />
-          </Field>
-          <Field label="Due date">
-            <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-          </Field>
-        </div>
-
-        <Field label="Tags" hint="Comma-separated, e.g. procurement, vendor, FY2024.">
-          <Input
-            placeholder="procurement, vendor, FY2024"
-            value={tags}
-            onChange={(e) => setTags(e.target.value)}
-          />
-        </Field>
-      </div>
-    </Modal>
   )
 }
 
