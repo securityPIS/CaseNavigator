@@ -46,6 +46,6 @@ export function useVisibleCases(): Case[] | undefined {
       if (list) list.push(s)
       else byCase.set(s.caseId, [s])
     }
-    return cases.filter((c) => canAccessCase(me, role, byCase.get(c.id) ?? []))
+    return cases.filter((c) => canAccessCase(me, role, byCase.get(c.id) ?? [], c.viewerIds))
   }, [userId])
 }

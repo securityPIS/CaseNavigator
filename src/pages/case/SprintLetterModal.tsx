@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { AlertTriangle, CheckCircle2, KeyRound, Paperclip, Plus, Printer, Upload, X } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, KeyRound, Plus, Printer, X } from 'lucide-react'
 import { db } from '@/domain/db'
 import type { Role, Sprint, SprintLetter, SprintTeamEntry, SprintTeamRole, Template, User } from '@/domain/types'
 import {
@@ -13,7 +13,7 @@ import {
   sprintNumber,
   teamFor,
 } from '@/domain/sprintLetter'
-import { cn, formatBytes, uid } from '@/lib/utils'
+import { cn, uid } from '@/lib/utils'
 import { Badge, Button, IconButton, Input, Select, Textarea } from '@/components/ui/primitives'
 import { Modal } from '@/components/ui/Modal'
 import { FormSection, LetterPreview, ListEditor } from '@/components/sprint/LetterParts'
@@ -52,7 +52,6 @@ export function SprintLetterModal({
   /** Called with the order's id once it is saved. */
   onSaved?: (id: string) => void
 }) {
-  const fileRef = useRef<HTMLInputElement>(null)
   const templates = useLiveQuery(() => db.templates.where('kind').equals('sprint').toArray(), [])
   const settings = useLiveQuery(() => db.settings.get('settings'), [])
   const caseRec = useLiveQuery(() => db.cases.get(caseId), [caseId])
@@ -60,7 +59,6 @@ export function SprintLetterModal({
   const [letter, setLetter] = useState<SprintLetter | null>(sprint?.letter ? structuredClone(sprint.letter) : null)
   const [validUntil, setValidUntil] = useState(sprint?.validUntil?.slice(0, 10) ?? '')
   const [notes, setNotes] = useState(sprint?.notes ?? '')
-  const [file, setFile] = useState<File | null>(null)
   const [saving, setSaving] = useState(false)
   const [showProblems, setShowProblems] = useState(false)
 
@@ -111,7 +109,7 @@ export function SprintLetterModal({
   const number = sprintNumber(b, letter.seq, letter.year)
   const problems = letterProblems(letter)
   const granted = membersFromLetter(letter)
-  const canIssue = problems.length === 0 && !!file
+  const canIssue = problems.length === 0
 
   /* ------------------------------------------------------------ team */
 
@@ -159,13 +157,6 @@ export function SprintLetterModal({
       }
       const issuedAt = clean.dateIssued ? new Date(clean.dateIssued).toISOString() : now
 
-      let doc: Partial<Sprint> = {}
-      if (issue && file) {
-        const blobId = uid('blob')
-        await db.blobs.add({ id: blobId, data: file })
-        doc = { docBlobId: blobId, docName: file.name, docMime: file.type || 'application/octet-stream', docSize: file.size }
-      }
-
       const record: Sprint = {
         id: sprint?.id ?? uid('sp'),
         caseId,
@@ -179,7 +170,6 @@ export function SprintLetterModal({
         draft: !issue,
         members: membersFromLetter(clean).map((m) => ({ ...m, addedAt: now })),
         letter: clean,
-        ...doc,
         notes: notes.trim() || undefined,
         createdAt: sprint?.createdAt ?? now,
         updatedAt: now,
@@ -191,7 +181,7 @@ export function SprintLetterModal({
         const n = record.members.length
         toast.success('SPRINT issued', `${n} investigator${n === 1 ? '' : 's'} can now open this case.`)
       } else {
-        toast.success('Draft saved', 'Print it for signature, then come back to attach the signed scan and issue it.')
+        toast.success('Draft saved', 'Come back to complete it and issue it — until then nobody gains access through it.')
       }
       onClose()
     } finally {
@@ -219,9 +209,7 @@ export function SprintLetterModal({
             {problems.length > 0 ? <AlertTriangle size={12} /> : <CheckCircle2 size={12} />}
             {problems.length > 0
               ? `${problems.length} item${problems.length === 1 ? '' : 's'} to complete before issuing`
-              : file
-                ? 'Ready to issue'
-                : 'Complete — attach the signed scan to issue'}
+              : 'Ready to issue'}
           </button>
           <Button variant="ghost" icon={<Printer size={13} />} onClick={() => printLetterHtml(html)}>
             Print
@@ -244,7 +232,6 @@ export function SprintLetterModal({
                 {problems.map((p) => (
                   <li key={p}>{p}</li>
                 ))}
-                {!file && <li>Lampirkan scan surat yang sudah ditandatangani.</li>}
               </ul>
             </div>
           )}
@@ -394,34 +381,9 @@ export function SprintLetterModal({
             </div>
           </FormSection>
 
-          {/* G ─ Dokumen */}
-          <FormSection title="Surat bertanda tangan" hint="Not needed for a draft. Required to issue — the signed scan is what makes the order valid.">
-            {file ? (
-              <div className="flex items-center gap-2.5 rounded-lg border border-brand/40 bg-brand/8 px-3 py-2.5">
-                <Paperclip size={13} className="shrink-0 text-brand-bright" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[12px] text-ink">{file.name}</span>
-                  <span className="text-[10.5px] text-ink-4 tnum">{formatBytes(file.size)}</span>
-                </span>
-                <IconButton label="Remove file" size={24} onClick={() => setFile(null)}>
-                  <X size={12} />
-                </IconButton>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => fileRef.current?.click()}
-                className="flex w-full flex-col items-center justify-center rounded-lg border-2 border-dashed border-line-strong bg-abyss/35 px-4 py-5 transition-colors hover:border-brand/60 hover:bg-brand/6"
-              >
-                <Upload size={17} className="text-ink-3" />
-                <span className="mt-1.5 text-[12px] font-medium text-ink">Upload the signed Surat Perintah</span>
-                <span className="mt-0.5 text-[10.5px] text-ink-4">PDF or scan</span>
-              </button>
-            )}
-            <input ref={fileRef} type="file" hidden onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-            <Field label="Catatan">
-              <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional — internal note, not printed" />
-            </Field>
+          {/* G ─ Catatan */}
+          <FormSection title="Catatan">
+            <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional — internal note, not printed" />
           </FormSection>
         </div>
 

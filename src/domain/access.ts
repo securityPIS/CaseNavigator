@@ -3,10 +3,10 @@ import type { Permission, Role, Sprint, User } from './types'
 /**
  * Case access rules.
  *
- * The whole model is one sentence: a case is reachable if your role can see
- * every case, or if an active SPRINT on that case names you. Investigators
- * hold no workspace-wide view, so their caseload is exactly the set of orders
- * they have been assigned to — which is the point of issuing orders at all.
+ * A case is reachable if your role can see every case, if an active SPRINT
+ * on that case names you, or if you were added to the case's viewers by hand.
+ * Investigators hold no workspace-wide view, so their caseload is the orders
+ * they are named on plus any case they were given by hand.
  */
 
 export type SprintState = 'draft' | 'active' | 'scheduled' | 'expired' | 'revoked'
@@ -42,10 +42,16 @@ export function assignedUserIds(sprints: Sprint[]): Set<string> {
   return ids
 }
 
-export function canAccessCase(user: User | undefined, role: Role | undefined, caseSprints: Sprint[]): boolean {
+export function canAccessCase(
+  user: User | undefined,
+  role: Role | undefined,
+  caseSprints: Sprint[],
+  /** People given access to this case by hand (Case.viewerIds). */
+  viewerIds: string[] = [],
+): boolean {
   if (!user || !user.active) return false
   if (can(role, 'case.viewAll')) return true
-  return assignedUserIds(caseSprints).has(user.id)
+  return assignedUserIds(caseSprints).has(user.id) || viewerIds.includes(user.id)
 }
 
 /** Why a case is open to someone — drives the banner on the SPRINT tab. */

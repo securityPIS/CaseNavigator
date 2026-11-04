@@ -381,21 +381,29 @@ export function newLetter(
   }
 }
 
-/**
- * Menimbang point 1 as suggested by the case's sumber laporan — the report
- * that triggered the order. Only a starting point; the form keeps it editable.
- */
-export function menimbangFromSource(src: ReportSource | undefined, perihal: string): string | undefined {
-  if (!src) return undefined
-  const about = perihal.trim() ? ` perihal ${perihal.trim()}` : ''
+/** How one sumber laporan reads inside Menimbang point 1. */
+function sourcePhrase(src: ReportSource): string {
   switch (src.kind) {
     case 'wbs':
-      return `Laporan melalui Whistle Blower System (WBS) Nomor ${src.wbsNumber?.trim() || '…'}${about}.`
+      return `laporan melalui Whistle Blower System (WBS) Nomor ${src.wbsNumber?.trim() || '…'}`
     case 'management':
-      return `Management Report berupa Nota Dinas Nomor ${src.notaDinasNumber?.trim() || '…'}${about}.`
+      return `Management Report berupa Nota Dinas Nomor ${src.notaDinasNumber?.trim() || '…'}`
     case 'internal':
-      return `Internal Report berupa Investigation Notes tanggal ${formatTanggal(src.recordedAt.slice(0, 10))}${about}.`
+      return `Internal Report berupa Investigation Notes tanggal ${formatTanggal(src.recordedAt.slice(0, 10))}`
   }
+}
+
+/**
+ * Menimbang point 1 as suggested by the case's sumber laporan — every report
+ * that triggered the order, in one sentence. Only a starting point; the form
+ * keeps it editable.
+ */
+export function menimbangFromSources(sources: ReportSource[] | undefined, perihal: string): string | undefined {
+  if (!sources?.length) return undefined
+  const phrases = sources.map(sourcePhrase)
+  const joined = phrases.length === 1 ? phrases[0] : `${phrases.slice(0, -1).join(', ')} dan ${phrases[phrases.length - 1]}`
+  const about = perihal.trim() ? ` perihal ${perihal.trim()}` : ''
+  return `${joined.charAt(0).toUpperCase()}${joined.slice(1)}${about}.`
 }
 
 /* ------------------------------------------- Letters for existing orders */
@@ -416,7 +424,7 @@ function dummyEmployeeNo(key: string): string {
  */
 export function letterFromSprint(
   sprint: Sprint,
-  ctx: { users: User[]; caseTitle?: string; reportSource?: ReportSource; template?: Template },
+  ctx: { users: User[]; caseTitle?: string; reportSources?: ReportSource[]; template?: Template },
 ): SprintLetter {
   const base = ctx.template?.sprint ?? DEFAULT_SPRINT_BODY
   // The order already has its number; print it verbatim.
@@ -454,7 +462,7 @@ export function letterFromSprint(
     year: date.slice(0, 4),
     perihal: sprint.subject,
     menimbang:
-      menimbangFromSource(ctx.reportSource, ctx.caseTitle ?? sprint.subject) ??
+      menimbangFromSources(ctx.reportSources, ctx.caseTitle ?? sprint.subject) ??
       `Laporan adanya indikasi pelanggaran terkait ${ctx.caseTitle ?? sprint.subject}.`,
     menimbangExtra: [],
     dasarExtra: [],
