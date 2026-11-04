@@ -19,6 +19,7 @@ import { Modal } from '@/components/ui/Modal'
 import { FormSection, LetterPreview, ListEditor } from '@/components/sprint/LetterParts'
 import { Field } from '@/pages/CasesPage'
 import { toast } from '@/stores/toast'
+import { caseHasSprint } from './SprintParts'
 
 const ACCESS_LABEL = { ketua: 'Ketua Tim', sekretaris: 'Sekretaris', anggota: 'Anggota' } as const
 
@@ -139,6 +140,11 @@ export function SprintLetterModal({
     }
     if (issue && !canIssue) {
       setShowProblems(true)
+      return
+    }
+    // One case, one SPRINT — a second order is never created alongside it.
+    if (!sprint && (await caseHasSprint(caseId))) {
+      toast.error('SPRINT sudah ada', 'Satu perkara hanya boleh memiliki satu Surat Perintah.')
       return
     }
     setSaving(true)

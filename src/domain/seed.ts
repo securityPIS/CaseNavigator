@@ -1,7 +1,7 @@
 import { db } from './db'
 import { avatarDataUri } from './avatar'
 import { DEFAULT_ROLES } from './roles'
-import { defaultSprintTemplate } from './sprintLetter'
+import { defaultSprintTemplate, letterFromSprint } from './sprintLetter'
 import type {
   ReportSource,
   Activity,
@@ -1478,33 +1478,11 @@ const QUESTIONS: Question[] = [
  */
 const SPRINTS: Sprint[] = [
   {
-    id: 'sp-014-1',
-    caseId: 'c-014',
-    number: 'SPRINT-088/INV/IV/2026',
-    subject: 'Perintah investigasi awal — dugaan penyimpangan pengadaan FY2024',
-    issuedBy: 'Elena Vos — Director of Integrity',
-    issuedAt: iso(94, 10, 0),
-    validFrom: iso(94, 10, 0),
-    validUntil: iso(52, 17, 0),
-    revoked: false,
-    members: [
-      { userId: 'u-jason', position: 'ketua', addedAt: iso(94, 10, 0) },
-      { userId: 'u-amara', position: 'anggota', addedAt: iso(94, 10, 0) },
-    ],
-    docBlobId: 'blob-sp-014-1',
-    docName: 'SPRINT-088-INV-IV-2026.txt',
-    docMime: 'text/plain',
-    docSize: 0,
-    notes: 'Superseded by SPRINT-121 when the scope widened to the wire transfer.',
-    createdAt: iso(94, 10, 0),
-    updatedAt: iso(52, 17, 0),
-  },
-  {
     id: 'sp-014-2',
     caseId: 'c-014',
-    number: 'SPRINT-121/INV/VI/2026',
-    subject: 'Perpanjangan dan perluasan lingkup — aliran dana ke Summit Supplies',
-    issuedBy: 'Elena Vos — Director of Integrity',
+    number: 'Prin-121/PIS0400/2026-S0',
+    subject: 'Dugaan penyimpangan pengadaan FY2024 dan aliran dana ke Summit Supplies',
+    issuedBy: 'Elena Vos — VP HSSE',
     issuedAt: iso(52, 10, 0),
     validFrom: iso(52, 10, 0),
     validUntil: iso(-30, 17, 0),
@@ -1515,7 +1493,7 @@ const SPRINTS: Sprint[] = [
       { userId: 'u-ryan', position: 'anggota', addedAt: iso(43, 9, 30) },
     ],
     docBlobId: 'blob-sp-014-2',
-    docName: 'SPRINT-121-INV-VI-2026.txt',
+    docName: 'Prin-121-PIS0400-2026-S0.txt',
     docMime: 'text/plain',
     docSize: 0,
     notes: 'Digital forensics added after the laptop image was taken.',
@@ -1525,9 +1503,9 @@ const SPRINTS: Sprint[] = [
   {
     id: 'sp-011-1',
     caseId: 'c-011',
-    number: 'SPRINT-102/INV/V/2026',
+    number: 'Prin-102/PIS0400/2026-S0',
     subject: 'Perintah investigasi — kehilangan kargo rute Northbridge',
-    issuedBy: 'Elena Vos — Director of Integrity',
+    issuedBy: 'Elena Vos — VP HSSE',
     issuedAt: iso(61, 9, 0),
     validFrom: iso(61, 9, 0),
     revoked: false,
@@ -1536,7 +1514,7 @@ const SPRINTS: Sprint[] = [
       { userId: 'u-amara', position: 'anggota', addedAt: iso(61, 9, 0) },
     ],
     docBlobId: 'blob-sp-011-1',
-    docName: 'SPRINT-102-INV-V-2026.txt',
+    docName: 'Prin-102-PIS0400-2026-S0.txt',
     docMime: 'text/plain',
     docSize: 0,
     createdAt: iso(61, 9, 0),
@@ -1545,15 +1523,15 @@ const SPRINTS: Sprint[] = [
   {
     id: 'sp-009-1',
     caseId: 'c-009',
-    number: 'SPRINT-071/INV/III/2026',
+    number: 'Prin-071/PIS0400/2026-S0',
     subject: 'Perintah investigasi — anomali reimbursement divisi penjualan',
-    issuedBy: 'Elena Vos — Director of Integrity',
+    issuedBy: 'Elena Vos — VP HSSE',
     issuedAt: iso(120, 9, 0),
     validFrom: iso(120, 9, 0),
     revoked: false,
     members: [{ userId: 'u-amara', position: 'ketua', addedAt: iso(120, 9, 0) }],
     docBlobId: 'blob-sp-009-1',
-    docName: 'SPRINT-071-INV-III-2026.txt',
+    docName: 'Prin-071-PIS0400-2026-S0.txt',
     docMime: 'text/plain',
     docSize: 0,
     createdAt: iso(120, 9, 0),
@@ -1562,15 +1540,15 @@ const SPRINTS: Sprint[] = [
   {
     id: 'sp-006-1',
     caseId: 'c-006',
-    number: 'SPRINT-063/INV/II/2026',
+    number: 'Prin-063/PIS0400/2026-S0',
     subject: 'Perintah investigasi — indikasi persekongkolan tender fasilitas',
-    issuedBy: 'Elena Vos — Director of Integrity',
+    issuedBy: 'Elena Vos — VP HSSE',
     issuedAt: iso(146, 9, 0),
     validFrom: iso(146, 9, 0),
     revoked: false,
     members: [{ userId: 'u-jason', position: 'ketua', addedAt: iso(146, 9, 0) }],
     docBlobId: 'blob-sp-006-1',
-    docName: 'SPRINT-063-INV-II-2026.txt',
+    docName: 'Prin-063-PIS0400-2026-S0.txt',
     docMime: 'text/plain',
     docSize: 0,
     createdAt: iso(146, 9, 0),
@@ -1831,7 +1809,14 @@ export async function seedDatabase(force = false): Promise<void> {
   const sprints = SPRINTS.map((s) => {
     const data = new Blob([sprintDocBody(s)], { type: s.docMime })
     if (s.docBlobId) sprintDocs.push({ id: s.docBlobId, data })
-    return { ...s, docSize: data.size }
+    // Every seeded order also carries its letter, so it previews as the
+    // template document.
+    const letter = letterFromSprint(s, {
+      users: USERS,
+      caseTitle: CASES.find((c) => c.id === s.caseId)?.title,
+      reportSource: REPORT_SOURCES[s.caseId],
+    })
+    return { ...s, docSize: data.size, letter }
   })
 
   // Registration documents work the same way: build each blob, then attach the

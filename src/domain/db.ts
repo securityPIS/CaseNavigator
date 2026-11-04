@@ -1,5 +1,6 @@
 import Dexie, { type EntityTable } from 'dexie'
 import { DEFAULT_ROLES, DEFAULT_ROLE_ID, LEGACY_ROLE_MAP } from './roles'
+import { sprintState, type SprintState } from './access'
 import { defaultSprintTemplate, legacyToBody, summarizeSprintTemplate, type LegacySprintBody } from './sprintLetter'
 import type {
   Activity,
@@ -240,6 +241,30 @@ class CaseNavigatorDB extends Dexie {
             letter.dasarExtra ??= []
             delete letter.dasar
           })
+      })
+
+    /**
+     * v7 — one SPRINT per case. Where a case holds several, the one that
+     * matters keeps its place — the order in force first, then a draft, then
+     * the most recent — and the others are removed with their scans.
+     */
+    this.version(7)
+      .stores({
+        sprints: 'id, caseId, number',
+      })
+      .upgrade(async (tx) => {
+        const RANK: Record<SprintState, number> = { active: 0, draft: 1, scheduled: 2, expired: 3, revoked: 4 }
+        const all: Sprint[] = await tx.table('sprints').toArray()
+        const byCase = new Map<string, Sprint[]>()
+        for (const s of all) byCase.set(s.caseId, [...(byCase.get(s.caseId) ?? []), s])
+        for (const list of byCase.values()) {
+          if (list.length < 2) continue
+          list.sort((a, b) => RANK[sprintState(a)] - RANK[sprintState(b)] || b.issuedAt.localeCompare(a.issuedAt))
+          for (const extra of list.slice(1)) {
+            if (extra.docBlobId) await tx.table('blobs').delete(extra.docBlobId)
+            await tx.table('sprints').delete(extra.id)
+          }
+        }
       })
   }
 }

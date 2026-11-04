@@ -326,7 +326,7 @@ export interface SprintMember {
 export interface Sprint {
   id: string
   caseId: string
-  /** Nomor Surat Perintah, e.g. SPRINT-014/INV/VII/2026 */
+  /** Nomor Surat Perintah, e.g. Prin-014/PIS0400/2026-S0 */
   number: string
   subject: string
   /** Pejabat yang menerbitkan */

@@ -1,11 +1,13 @@
 import type {
   ReportSource,
+  Sprint,
   SprintLetter,
   SprintPosition,
   SprintTeamEntry,
   SprintTeamRole,
   SprintTemplateBody,
   Template,
+  User,
 } from './types'
 
 /**
@@ -393,6 +395,76 @@ export function menimbangFromSource(src: ReportSource | undefined, perihal: stri
       return `Management Report berupa Nota Dinas Nomor ${src.notaDinasNumber?.trim() || '…'}${about}.`
     case 'internal':
       return `Internal Report berupa Investigation Notes tanggal ${formatTanggal(src.recordedAt.slice(0, 10))}${about}.`
+  }
+}
+
+/* ------------------------------------------- Letters for existing orders */
+
+/** Stable, plausible employee number for a person — demo filler only. */
+function dummyEmployeeNo(key: string): string {
+  let h = 7
+  for (const ch of key) h = (h * 31 + ch.charCodeAt(0)) % 1_000_000
+  return `19${String(h).padStart(6, '0')}`
+}
+
+/**
+ * The letter for an order that has none of its own — one recorded from a
+ * scan, or seeded before letters existed — so it can still be shown as the
+ * template document. The order's own facts (number, perihal, date, team) are
+ * used as they are; what the record never captured (Pembina, employee
+ * numbers, the signatory's name) is filled with placeholder data.
+ */
+export function letterFromSprint(
+  sprint: Sprint,
+  ctx: { users: User[]; caseTitle?: string; reportSource?: ReportSource; template?: Template },
+): SprintLetter {
+  const base = ctx.template?.sprint ?? DEFAULT_SPRINT_BODY
+  // The order already has its number; print it verbatim.
+  const body: SprintTemplateBody = { ...structuredClone(base), numberPattern: sprint.number.replace(/[{}]/g, '') }
+  const roles = body.roles
+  const lead = roles.find((r) => r.access === 'ketua') ?? roles.find((r) => r.access)
+  const member = [...roles].reverse().find((r) => r.access === 'anggota') ?? lead
+  const patron = roles.find((r) => !r.access && r.min > 0)
+
+  const team: SprintTeamEntry[] = []
+  if (patron) {
+    team.push({ id: `${sprint.id}-pembina`, roleId: patron.id, name: 'Ir. Bambang Setiawan', employeeNo: '19720315', jobTitle: 'Manager Security' })
+  }
+  for (const m of sprint.members) {
+    const role = m.position === 'ketua' ? lead : member
+    if (!role) continue
+    const u = ctx.users.find((x) => x.id === m.userId)
+    team.push({
+      id: `${sprint.id}-${m.userId}`,
+      roleId: role.id,
+      userId: m.userId,
+      name: u?.name ?? m.userId,
+      employeeNo: dummyEmployeeNo(m.userId),
+      jobTitle: u?.title ?? 'Pekerja',
+    })
+  }
+
+  const [signer] = sprint.issuedBy.split(/\s+—\s+/)
+  const date = sprint.issuedAt.slice(0, 10)
+  return {
+    templateId: ctx.template?.id ?? DEFAULT_SPRINT_TEMPLATE_ID,
+    templateName: ctx.template?.name ?? 'Surat Perintah Investigasi',
+    body,
+    seq: '',
+    year: date.slice(0, 4),
+    perihal: sprint.subject,
+    menimbang:
+      menimbangFromSource(ctx.reportSource, ctx.caseTitle ?? sprint.subject) ??
+      `Laporan adanya indikasi pelanggaran terkait ${ctx.caseTitle ?? sprint.subject}.`,
+    menimbangExtra: [],
+    dasarExtra: [],
+    objek: (ctx.caseTitle ?? sprint.subject).toLowerCase(),
+    untukExtra: [],
+    place: body.defaultPlace,
+    dateIssued: date,
+    signerName: signer?.trim() || 'Nama Lengkap',
+    signerTitle: body.issuerTitle,
+    team,
   }
 }
 
