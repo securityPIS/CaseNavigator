@@ -39,6 +39,9 @@ const CompanySettingPage = lazy(() =>
 )
 const RoleSettingPage = lazy(() => import('@/pages/admin/RoleSettingPage').then((m) => ({ default: m.RoleSettingPage })))
 const TemplatePage = lazy(() => import('@/pages/admin/TemplatePage').then((m) => ({ default: m.TemplatePage })))
+const SprintTemplateEditorPage = lazy(() =>
+  import('@/pages/admin/SprintTemplateEditorPage').then((m) => ({ default: m.SprintTemplateEditorPage })),
+)
 const QuestionsPage = lazy(() => import('@/pages/admin/QuestionsPage').then((m) => ({ default: m.QuestionsPage })))
 
 export function App() {
@@ -72,6 +75,7 @@ export function App() {
               <Route path="/admin/company" element={<CompanySettingPage />} />
               <Route path="/admin/roles" element={<RoleSettingPage />} />
               <Route path="/admin/templates" element={<TemplatePage />} />
+              <Route path="/admin/templates/sprint/:templateId" element={<SprintTemplateEditorPage />} />
               <Route path="/admin/questions" element={<QuestionsPage />} />
 
               <Route path="*" element={<Navigate to="/" replace />} />

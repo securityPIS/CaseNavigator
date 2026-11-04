@@ -1,6 +1,6 @@
 import Dexie, { type EntityTable } from 'dexie'
 import { DEFAULT_ROLES, DEFAULT_ROLE_ID, LEGACY_ROLE_MAP } from './roles'
-import { defaultSprintTemplate } from './sprintLetter'
+import { defaultSprintTemplate, legacyToBody, summarizeSprintTemplate, type LegacySprintBody } from './sprintLetter'
 import type {
   Activity,
   Bap,
@@ -22,6 +22,7 @@ import type {
   Role,
   Slide,
   Sprint,
+  SprintLetter,
   Template,
   User,
 } from './types'
@@ -203,6 +204,42 @@ class CaseNavigatorDB extends Dexie {
         const table = tx.table('templates')
         const hasSprint = (await table.where('kind').equals('sprint').count()) > 0
         if (!hasSprint) await table.put(defaultSprintTemplate(new Date().toISOString()))
+      })
+
+    /**
+     * v6 — SPRINT templates became documents edited like a Word file, with
+     * field chips where the form fills in. Templates and letters stored in
+     * the earlier structured shape are laid out as the same document; a
+     * letter's own edited Dasar list is written into its copy, so it prints
+     * exactly as before.
+     */
+    this.version(6)
+      .stores({
+        templates: 'id, kind, isDefault',
+        sprints: 'id, caseId, number',
+      })
+      .upgrade(async (tx) => {
+        await tx
+          .table('templates')
+          .where('kind')
+          .equals('sprint')
+          .modify((t: Template) => {
+            const old = t.sprint as unknown as LegacySprintBody | undefined
+            if (!old || 'html' in old) return
+            t.sprint = legacyToBody(old)
+            t.blocks = summarizeSprintTemplate(t.sprint)
+          })
+        await tx
+          .table('sprints')
+          .toCollection()
+          .modify((s: Sprint) => {
+            const letter = s.letter as (SprintLetter & { dasar?: string[] }) | undefined
+            if (!letter) return
+            const old = letter.body as unknown as LegacySprintBody
+            if (!('html' in letter.body)) letter.body = legacyToBody(old, letter.dasar ?? old.dasar)
+            letter.dasarExtra ??= []
+            delete letter.dasar
+          })
       })
   }
 }

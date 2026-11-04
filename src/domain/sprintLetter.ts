@@ -10,12 +10,58 @@ import type {
 /**
  * Surat Perintah drafted from a template.
  *
- * A template holds the wording that never changes between orders (Dasar,
- * standing tasks, closing lines, the team roles). The form fills in what does
- * (number, case, the triggering report, the team). Rendering both together
- * gives the letter, as one self-contained HTML document that is previewed,
- * printed and downloaded from the same source.
+ * The template is a document, edited like a Word file: everything typed in it
+ * is fixed wording, and the parts each order fills in are field chips. The
+ * SPRINT form on a case supplies those values; rendering swaps every chip for
+ * its value and gives the letter as one self-contained HTML document, which
+ * is previewed, printed and downloaded from the same source.
  */
+
+/* ---------------------------------------------------------------- Fields */
+
+export type SprintFieldKind = 'text' | 'list' | 'team' | 'logo'
+
+export interface SprintField {
+  key: string
+  label: string
+  kind: SprintFieldKind
+  hint: string
+}
+
+/**
+ * Every field a template can place. "list" fields expand into one numbered
+ * point each when their chip sits alone in a list item, and vanish when the
+ * form leaves them empty.
+ */
+export const SPRINT_FIELDS: SprintField[] = [
+  { key: 'nomor', label: 'Nomor surat', kind: 'text', hint: 'Built from the number pattern, sequence and year' },
+  { key: 'perihal', label: 'Perihal kasus', kind: 'text', hint: 'The case under investigation' },
+  { key: 'menimbang', label: 'Dasar permintaan', kind: 'text', hint: 'Request / report that triggered the order' },
+  { key: 'menimbang_tambahan', label: 'Menimbang tambahan', kind: 'list', hint: 'Extra considerations for this case' },
+  { key: 'dasar_tambahan', label: 'Dasar tambahan', kind: 'list', hint: 'Extra legal basis for this case' },
+  { key: 'objek', label: 'Objek investigasi', kind: 'text', hint: 'What is investigated' },
+  { key: 'untuk_tambahan', label: 'Tugas tambahan', kind: 'list', hint: 'Extra tasks for this case' },
+  { key: 'tempat', label: 'Tempat ditetapkan', kind: 'text', hint: 'Ditetapkan di …' },
+  { key: 'tanggal', label: 'Tanggal ditetapkan', kind: 'text', hint: 'Pada tanggal … — the order is in force from it' },
+  { key: 'jabatan_penandatangan', label: 'Jabatan penandatangan', kind: 'text', hint: 'e.g. VP HSSE' },
+  { key: 'nama_penandatangan', label: 'Nama penandatangan', kind: 'text', hint: 'Full name of the signatory' },
+  { key: 'susunan_tim', label: 'Tabel susunan tim', kind: 'team', hint: 'The team table — one row per person' },
+  { key: 'logo', label: 'Logo perusahaan', kind: 'logo', hint: 'From Company Setting' },
+]
+
+const FIELD_MAP = new Map(SPRINT_FIELDS.map((f) => [f.key, f]))
+
+export function fieldChip(key: string): string {
+  const f = FIELD_MAP.get(key)
+  return `<span class="field" data-field="${key}" contenteditable="false">${f ? f.label : key}</span>`
+}
+
+/** The fields a template's document actually uses. */
+export function fieldsIn(html: string): Set<string> {
+  const out = new Set<string>()
+  for (const m of html.matchAll(/data-field="([a-z_]+)"/g)) out.add(m[1])
+  return out
+}
 
 /* -------------------------------------------------------------- Defaults */
 
@@ -26,8 +72,32 @@ export const DEFAULT_SPRINT_ROLES: SprintTeamRole[] = [
   { id: 'anggota', label: 'Anggota', min: 1, access: 'anggota' },
 ]
 
+/**
+ * The structured shape SPRINT templates had before the document editor.
+ * Kept to build the standard document and to convert stored templates and
+ * letters (see the v6 upgrade in db.ts).
+ */
+export interface LegacySprintBody {
+  lampiranCode: string
+  headerTitle: string
+  letterTitle: string
+  numberPattern: string
+  tentang: string
+  issuerTitle: string
+  menimbangFixed: string[]
+  dasar: string[]
+  kepada: string
+  untukIntro: string
+  untukObjekPrefix: string
+  untukFixed: string[]
+  penutup: string[]
+  defaultPlace: string
+  lampiranTitle: string
+  roles: SprintTeamRole[]
+}
+
 /** The order format of TKO B14-002/PIS0420/2024-S9, Lampiran 5. */
-export const DEFAULT_SPRINT_BODY: SprintTemplateBody = {
+const TKO_WORDING: LegacySprintBody = {
   lampiranCode: 'Lampiran 5-TKO No. B14-002/PIS0420/2024-S9',
   headerTitle: 'SURAT PERINTAH INVESTIGASI',
   letterTitle: 'SURAT PERINTAH',
@@ -58,6 +128,72 @@ export const DEFAULT_SPRINT_BODY: SprintTemplateBody = {
   roles: DEFAULT_SPRINT_ROLES,
 }
 
+const esc = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+/** User text → HTML, keeping line breaks. */
+const text = (s: string) => esc(s).replace(/\n/g, '<br>')
+
+const titleCase = (s: string) => s.toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase())
+
+/** Lays the structured wording out as an editable document. `dasar`
+    overrides the template's list — an old letter's edited Dasar. */
+export function legacyBodyToHtml(b: LegacySprintBody, dasar = b.dasar): string {
+  const fixed = (s: string) =>
+    text(s)
+      .replace(/\{\{\s*jabatan_penerbit\s*\}\}/g, esc(b.issuerTitle))
+      .replace(/\{\{\s*perihal\s*\}\}/g, fieldChip('perihal'))
+  const li = (items: string[]) => items.filter((s) => s.trim()).map((s) => `<li>${fixed(s)}</li>`).join('')
+  const C = 'style="text-align: center;"'
+
+  return [
+    '<table class="layout"><tbody><tr>',
+    `<td>${b.lampiranCode.trim() ? `<p>${esc(b.lampiranCode)}</p>` : ''}<p><b>${esc(b.headerTitle)}</b></p></td>`,
+    `<td style="text-align: right;">${fieldChip('logo')}</td>`,
+    '</tr></tbody></table>',
+    '<p><br></p>',
+    `<p ${C}><b><u>${esc(b.letterTitle)}</u></b><br>No. ${fieldChip('nomor')}</p>`,
+    `<p ${C}><b>TENTANG</b><br><b>${esc(b.tentang)}</b><br>(${fieldChip('perihal')})</p>`,
+    `<p ${C}><b>${esc(b.issuerTitle)}</b></p>`,
+    '<table class="clause"><tbody>',
+    `<tr><td>Menimbang</td><td>:</td><td><ol><li>${fieldChip('menimbang')}</li><li>${fieldChip('menimbang_tambahan')}</li>${li(b.menimbangFixed)}</ol></td></tr>`,
+    `<tr><td>Dasar</td><td>:</td><td><ol>${li(dasar)}<li>${fieldChip('dasar_tambahan')}</li></ol></td></tr>`,
+    '</tbody></table>',
+    `<p ${C}><b>MEMERINTAHKAN</b></p>`,
+    '<table class="clause"><tbody>',
+    `<tr><td>Kepada</td><td>:</td><td><p style="text-align: justify;">${fixed(b.kepada)}</p></td></tr>`,
+    `<tr><td>Untuk</td><td>:</td><td><p style="text-align: justify;">${fixed(b.untukIntro)}</p>` +
+      `<ol><li>${fixed(b.untukObjekPrefix)} ${fieldChip('objek')}</li><li>${fieldChip('untuk_tambahan')}</li>${li(b.untukFixed)}</ol></td></tr>`,
+    '</tbody></table>',
+    `<p>${b.penutup.filter((s) => s.trim()).map(fixed).join('<br>')}</p>`,
+    '<table class="layout"><tbody><tr><td style="width: 45%;"></td><td>',
+    `<p>${esc(titleCase(b.letterTitle))}<br><u>Nomor : ${fieldChip('nomor')}</u></p>`,
+    `<p>Ditetapkan di ${fieldChip('tempat')}<br>Pada tanggal ${fieldChip('tanggal')}</p>`,
+    '<hr>',
+    `<p>${fieldChip('jabatan_penandatangan')},</p>`,
+    '<p><br></p><p><br></p><p><br></p>',
+    `<p>(${fieldChip('nama_penandatangan')})</p>`,
+    '</td></tr></tbody></table>',
+    '<div class="page-break"></div>',
+    `<p style="text-align: right;">${fieldChip('logo')}</p>`,
+    `<p ${C}><b>${esc(b.lampiranTitle)}</b><br>${fieldChip('perihal')}</p>`,
+    '<p><br></p>',
+    `<p>${fieldChip('susunan_tim')}</p>`,
+  ].join('')
+}
+
+export function legacyToBody(b: LegacySprintBody, dasar?: string[]): SprintTemplateBody {
+  return {
+    html: legacyBodyToHtml(b, dasar),
+    numberPattern: b.numberPattern,
+    defaultPlace: b.defaultPlace,
+    issuerTitle: b.issuerTitle,
+    roles: b.roles,
+  }
+}
+
+export const DEFAULT_SPRINT_BODY: SprintTemplateBody = legacyToBody(TKO_WORDING)
+
 export const DEFAULT_SPRINT_TEMPLATE_ID = 'tpl-sprint-1'
 
 export function defaultSprintTemplate(updatedAt: string): Template {
@@ -75,13 +211,120 @@ export function defaultSprintTemplate(updatedAt: string): Template {
 
 /** The short outline shown on a SPRINT template's card. */
 export function summarizeSprintTemplate(body: SprintTemplateBody): string[] {
+  const used = fieldsIn(body.html)
   return [
     `Nomor ${body.numberPattern}`,
-    `Diterbitkan ${body.issuerTitle || '—'}`,
-    `Dasar — ${body.dasar.length} ketentuan`,
-    `Untuk — ${body.untukFixed.length + 1} tugas`,
+    `Ditandatangani ${body.issuerTitle || '—'}`,
+    `${used.size} form fields in the document`,
     `Tim — ${body.roles.map((r) => r.label).join(', ') || 'tanpa peran'}`,
   ]
+}
+
+/* ------------------------------------------------------------ Sanitizing */
+
+const ALLOWED_TAGS = new Set([
+  'P', 'BR', 'B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'SPAN', 'DIV', 'FONT', 'OL', 'UL', 'LI',
+  'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TD', 'TH', 'COLGROUP', 'COL', 'HR',
+  'H1', 'H2', 'H3', 'H4', 'SUP', 'SUB', 'BLOCKQUOTE', 'IMG',
+])
+/** Removed with their content — never unwrapped into text. */
+const DROPPED_TAGS = new Set([
+  'SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'LINK', 'META', 'TITLE', 'HEAD', 'SVG', 'MATH',
+  'TEMPLATE', 'NOSCRIPT', 'FORM', 'INPUT', 'BUTTON', 'TEXTAREA', 'SELECT', 'VIDEO', 'AUDIO', 'CANVAS',
+])
+const ALLOWED_ATTRS = new Set(['style', 'class', 'colspan', 'rowspan', 'align', 'size', 'face', 'color', 'width', 'valign'])
+const ALLOWED_CLASSES = new Set(['layout', 'clause', 'page-break'])
+const ALLOWED_STYLES = new Set([
+  'text-align', 'font-weight', 'font-style', 'text-decoration', 'text-decoration-line', 'font-size', 'font-family',
+  'color', 'background-color', 'margin-left', 'margin-top', 'margin-bottom', 'padding-left', 'text-indent',
+  'width', 'vertical-align', 'line-height', 'list-style-type',
+])
+
+function cleanStyle(style: string): string {
+  return style
+    .split(';')
+    .map((d) => d.trim())
+    .filter((d) => {
+      const [prop, ...rest] = d.split(':')
+      const value = rest.join(':').toLowerCase()
+      return ALLOWED_STYLES.has(prop?.trim().toLowerCase() ?? '') && !/url\(|expression|javascript:/.test(value)
+    })
+    .join('; ')
+}
+
+function cleanNode(node: Node): void {
+  for (const child of [...node.childNodes]) {
+    if (child.nodeType === Node.COMMENT_NODE) {
+      child.remove()
+      continue
+    }
+    if (child.nodeType !== Node.ELEMENT_NODE) continue
+    const el = child as HTMLElement
+    const tag = el.tagName.toUpperCase()
+
+    // Field chips are rebuilt from the catalogue, whatever they arrived as.
+    const field = el.getAttribute('data-field')
+    if (field !== null) {
+      if (FIELD_MAP.has(field)) {
+        const chip = el.ownerDocument.createElement('span')
+        chip.className = 'field'
+        chip.setAttribute('data-field', field)
+        chip.setAttribute('contenteditable', 'false')
+        chip.textContent = FIELD_MAP.get(field)!.label
+        el.replaceWith(chip)
+      } else {
+        el.replaceWith(el.ownerDocument.createTextNode(el.textContent ?? ''))
+      }
+      continue
+    }
+
+    if (DROPPED_TAGS.has(tag) || tag.includes(':')) {
+      // Word's <o:p> and friends carry nothing worth keeping.
+      if (tag.includes(':')) el.replaceWith(...el.childNodes)
+      else el.remove()
+      continue
+    }
+    if (!ALLOWED_TAGS.has(tag)) {
+      cleanNode(el)
+      el.replaceWith(...el.childNodes)
+      continue
+    }
+
+    for (const attr of [...el.attributes]) {
+      const name = attr.name.toLowerCase()
+      if (tag === 'IMG' && name === 'src') {
+        if (!/^data:image\/(png|jpe?g|gif|webp);/i.test(attr.value)) el.remove()
+        continue
+      }
+      if (!ALLOWED_ATTRS.has(name)) el.removeAttribute(attr.name)
+      else if (name === 'style') {
+        const s = cleanStyle(attr.value)
+        if (s) el.setAttribute('style', s)
+        else el.removeAttribute('style')
+      } else if (name === 'class') {
+        const c = attr.value.split(/\s+/).filter((x) => ALLOWED_CLASSES.has(x)).join(' ')
+        if (c) el.setAttribute('class', c)
+        else el.removeAttribute('class')
+      }
+    }
+    if (tag === 'IMG' && !el.getAttribute('src')) {
+      el.remove()
+      continue
+    }
+    cleanNode(el)
+  }
+}
+
+/**
+ * Template HTML as it may be stored: known tags, harmless attributes, field
+ * chips rebuilt from the catalogue. Applied to everything saved from the
+ * editor and to every paste — Word's clipboard included.
+ */
+export function sanitizeTemplateHtml(html: string): string {
+  const doc = new DOMParser().parseFromString(`<body><div id="root">${html}</div></body>`, 'text/html')
+  const root = doc.getElementById('root')!
+  cleanNode(root)
+  return root.innerHTML
 }
 
 /* --------------------------------------------------------------- Helpers */
@@ -104,12 +347,6 @@ export function sprintNumber(body: SprintTemplateBody, seq: string, year: string
     .replace(/\{tahun\}/g, year.trim() || '....')
 }
 
-function fill(text: string, letter: SprintLetter): string {
-  return text
-    .replace(/\{\{\s*jabatan_penerbit\s*\}\}/g, letter.body.issuerTitle)
-    .replace(/\{\{\s*perihal\s*\}\}/g, letter.perihal.trim() || '…')
-}
-
 export function roleOf(body: SprintTemplateBody, roleId: string): SprintTeamRole | undefined {
   return body.roles.find((r) => r.id === roleId)
 }
@@ -130,7 +367,7 @@ export function newLetter(
     perihal: init.perihal ?? '',
     menimbang: '',
     menimbangExtra: [],
-    dasar: [...body.dasar],
+    dasarExtra: [],
     objek: '',
     untukExtra: [],
     place: body.defaultPlace,
@@ -166,20 +403,21 @@ export function teamFor(letter: SprintLetter, roleId: string): SprintTeamEntry[]
 
 /** Everything that stops the letter from being issued. Empty = ready. */
 export function letterProblems(letter: SprintLetter): string[] {
+  const used = fieldsIn(letter.body.html)
   const p: string[] = []
-  const need = (v: string, label: string) => {
+  const need = (v: string, label: string, field?: string) => {
+    if (field && !used.has(field)) return
     if (!v.trim()) p.push(`${label} belum diisi.`)
   }
   need(letter.seq, 'Nomor urut')
   need(letter.year, 'Tahun')
   need(letter.perihal, 'Perihal kasus')
-  need(letter.menimbang, 'Menimbang poin 1')
-  if (!letter.dasar.some((d) => d.trim())) p.push('Dasar minimal satu ketentuan.')
-  need(letter.objek, 'Objek investigasi')
-  need(letter.place, 'Tempat ditetapkan')
+  need(letter.menimbang, 'Menimbang — dasar permintaan', 'menimbang')
+  need(letter.objek, 'Objek investigasi', 'objek')
+  need(letter.place, 'Tempat ditetapkan', 'tempat')
   need(letter.dateIssued, 'Tanggal ditetapkan')
-  need(letter.signerName, 'Nama penandatangan')
-  need(letter.signerTitle, 'Jabatan penandatangan')
+  need(letter.signerName, 'Nama penandatangan', 'nama_penandatangan')
+  need(letter.signerTitle, 'Jabatan penandatangan', 'jabatan_penandatangan')
 
   for (const role of letter.body.roles) {
     const n = teamFor(letter, role.id).length
@@ -197,75 +435,70 @@ export function letterProblems(letter: SprintLetter): string[] {
   return p
 }
 
+/* -------------------------------------------------------------- Styling */
+
+/**
+ * The letter's typography, shared by the template editor and the rendered
+ * letter so the editing page and the printed page match. Scoped to
+ * .sprint-doc because the editor lives inside the app's own styles.
+ */
+export const SPRINT_DOC_CSS = `
+.sprint-doc { font-family: Arial, Helvetica, sans-serif; font-size: 11pt; line-height: 1.4; color: #111; text-align: left; }
+.sprint-doc p { margin: 0 0 3mm; }
+.sprint-doc h1 { font-size: 16pt; font-weight: 700; margin: 0 0 3mm; }
+.sprint-doc h2 { font-size: 14pt; font-weight: 700; margin: 0 0 3mm; }
+.sprint-doc h3 { font-size: 12pt; font-weight: 700; margin: 0 0 3mm; }
+.sprint-doc b, .sprint-doc strong { font-weight: 700; }
+.sprint-doc i, .sprint-doc em { font-style: italic; }
+.sprint-doc u { text-decoration: underline; }
+.sprint-doc s, .sprint-doc strike { text-decoration: line-through; }
+.sprint-doc ol { list-style: decimal; margin: 0 0 2mm; padding-left: 6mm; }
+.sprint-doc ul { list-style: disc; margin: 0 0 2mm; padding-left: 6mm; }
+.sprint-doc li { margin-bottom: 0.8mm; text-align: justify; }
+.sprint-doc li > p { margin: 0; }
+.sprint-doc table { width: 100%; border-collapse: collapse; margin: 0 0 2mm; }
+.sprint-doc td, .sprint-doc th { vertical-align: top; padding: 0 1.5mm 2mm 0; }
+.sprint-doc td > p:last-child { margin-bottom: 0; }
+/* A row is one unit on paper — the signature block above all must never split. */
+.sprint-doc tr { break-inside: avoid; }
+.sprint-doc table.clause > tbody > tr > td:first-child { width: 25mm; }
+.sprint-doc table.clause > tbody > tr > td:nth-child(2) { width: 5mm; }
+.sprint-doc hr { border: 0; border-top: 1px solid #111; margin: 2mm 0 3mm; }
+.sprint-doc img { max-width: 100%; }
+.sprint-doc .logo img { max-height: 18mm; max-width: 75mm; }
+.sprint-doc .logo-name { font-weight: 700; font-size: 13pt; }
+.sprint-doc .ph { color: #8a8f98; }
+.sprint-doc table.team td { padding: 0 2mm 1.5mm 0; }
+.sprint-doc table.team td.r { width: 32mm; }
+.sprint-doc table.team td.c { width: 4mm; }
+.sprint-doc table.team td.no { width: 26mm; }
+.sprint-doc table.team td.jb { width: 48mm; }
+`
+
 /* -------------------------------------------------------------- Renderer */
-
-const esc = (s: string) =>
-  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-
-/** User text → HTML, keeping line breaks. */
-const text = (s: string) => esc(s).replace(/\n/g, '<br>')
 
 const PH = '<span class="ph">……………………</span>'
 const val = (s: string, placeholder = PH) => (s.trim() ? text(s.trim()) : placeholder)
-
-function ol(items: string[]): string {
-  return `<ol>${items.map((i) => `<li>${i}</li>`).join('')}</ol>`
-}
 
 export interface RenderOptions {
   logoDataUrl?: string
   companyName?: string
 }
 
-const STYLE = `
+const PAGE_CSS = `
 @page { size: A4; margin: 20mm 20mm 20mm 25mm; }
 * { box-sizing: border-box; }
 html { background: #d9dde3; }
-body { margin: 0; padding: 8mm 0; font-family: Arial, Helvetica, sans-serif; font-size: 11pt; line-height: 1.4; color: #111; }
+body { margin: 0; padding: 8mm 0; }
 .page { background: #fff; width: 210mm; min-height: 297mm; margin: 0 auto 8mm; padding: 20mm 20mm 20mm 25mm; box-shadow: 0 2px 12px rgb(0 0 0 / 0.18); }
-.head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10mm; }
-.head p { margin: 0; }
-.code { margin-bottom: 6mm !important; }
-.logo { text-align: right; }
-.logo img { max-height: 18mm; max-width: 75mm; }
-.logo .name { font-weight: 700; font-size: 13pt; }
-.center { text-align: center; }
-.b { font-weight: 700; }
-.u { text-decoration: underline; }
-.title { margin-top: 10mm; }
-.gap { margin-top: 5mm; }
-table.cl { width: 100%; border-collapse: collapse; margin-top: 5mm; }
-table.cl td { vertical-align: top; padding: 0 0 3mm; }
-td.lbl { width: 25mm; }
-td.col { width: 5mm; }
-ol { margin: 0; padding-left: 6mm; }
-li { text-align: justify; margin-bottom: 0.8mm; }
-.just { text-align: justify; }
-.close p { margin: 0; }
-.ph { color: #8a8f98; }
-.sign { margin: 12mm 0 0 45%; break-inside: avoid; }
-.sign p { margin: 0; }
-.sign .rule { border-top: 1px solid #111; margin: 2mm 0 2mm -35%; }
-.sign .space { height: 22mm; }
-table.team { width: 100%; border-collapse: collapse; margin-top: 8mm; }
-table.team td { vertical-align: top; padding: 0 2mm 1.5mm 0; }
-table.team td.r { width: 32mm; }
-table.team td.c { width: 4mm; }
-table.team td.no { width: 26mm; }
-table.team td.jb { width: 48mm; }
 @media print {
   html { background: #fff; }
   body { padding: 0; }
   .page { width: auto; min-height: 0; margin: 0; padding: 0; box-shadow: none; }
   .page + .page { break-before: page; }
+  .page-break { break-before: page; }
 }
 `
-
-function logoBlock(o: RenderOptions): string {
-  if (o.logoDataUrl) return `<div class="logo"><img src="${esc(o.logoDataUrl)}" alt=""></div>`
-  if (o.companyName) return `<div class="logo"><div class="name">${esc(o.companyName)}</div></div>`
-  return '<div class="logo"></div>'
-}
 
 function teamTable(letter: SprintLetter): string {
   const blank = letter.team.length === 0
@@ -287,85 +520,122 @@ function teamTable(letter: SprintLetter): string {
       )
     })
   }
-  return `<table class="team">${rows.join('')}</table>`
+  return `<table class="team"><tbody>${rows.join('')}</tbody></table>`
 }
 
-/** The whole letter — body, penetapan and the team attachment — as HTML. */
+function textValue(key: string, letter: SprintLetter): string {
+  switch (key) {
+    case 'nomor':
+      return esc(sprintNumber(letter.body, letter.seq, letter.year))
+    case 'perihal':
+      return val(letter.perihal, '<span class="ph">…berisi kasus yang akan diinvestigasi…</span>')
+    case 'menimbang':
+      return val(letter.menimbang, '<span class="ph">… berisi surat permintaan investigasi / laporan adanya indikasi tindak fraud / kejahatan keamanan lainnya …</span>')
+    case 'objek':
+      return val(letter.objek)
+    case 'tempat':
+      return val(letter.place)
+    case 'tanggal':
+      return letter.dateIssued ? esc(formatTanggal(letter.dateIssued)) : '<span class="ph">(tanggal, bulan, tahun)</span>'
+    case 'jabatan_penandatangan':
+      return val(letter.signerTitle)
+    case 'nama_penandatangan':
+      return val(letter.signerName, '<span class="ph">Nama Lengkap</span>')
+    default:
+      return ''
+  }
+}
+
+function listValue(key: string, letter: SprintLetter): string[] {
+  const list =
+    key === 'menimbang_tambahan' ? letter.menimbangExtra : key === 'dasar_tambahan' ? letter.dasarExtra : letter.untukExtra
+  return list.map((s) => s.trim()).filter(Boolean)
+}
+
+/** True when `el` is all `box` holds, bar whitespace and line breaks. */
+function aloneIn(box: Element, el: Element): boolean {
+  if ((box.textContent ?? '').trim() !== (el.textContent ?? '').trim()) return false
+  return [...box.querySelectorAll('*')].every((x) => x === el || el.contains(x) || x.tagName === 'BR')
+}
+
+function fragment(doc: Document, html: string): DocumentFragment {
+  const t = doc.createElement('template')
+  t.innerHTML = html
+  return t.content
+}
+
+/** Swaps every field chip in the template for the letter's value. */
+function fillDocument(letter: SprintLetter, o: RenderOptions): string {
+  const doc = new DOMParser().parseFromString(`<body><div id="root">${letter.body.html}</div></body>`, 'text/html')
+  const root = doc.getElementById('root')!
+
+  for (const el of [...root.querySelectorAll('[data-field]')]) {
+    const key = el.getAttribute('data-field') ?? ''
+    const f = FIELD_MAP.get(key)
+    if (!f) {
+      el.remove()
+      continue
+    }
+
+    if (f.kind === 'list') {
+      const items = listValue(key, letter)
+      const li = el.closest('li')
+      if (li && aloneIn(li, el)) {
+        // Its own list item: one numbered point per entry, or none at all.
+        for (const item of items) {
+          const n = doc.createElement('li')
+          n.innerHTML = text(item)
+          li.before(n)
+        }
+        li.remove()
+      } else {
+        el.replaceWith(fragment(doc, items.map(text).join('<br>')))
+      }
+      continue
+    }
+
+    if (f.kind === 'team') {
+      const table = fragment(doc, teamTable(letter))
+      const block = el.parentElement?.closest('p, div')
+      if (block && block !== root && aloneIn(block, el)) block.replaceWith(table)
+      else el.replaceWith(table)
+      continue
+    }
+
+    if (f.kind === 'logo') {
+      const html = o.logoDataUrl
+        ? `<span class="logo"><img src="${esc(o.logoDataUrl)}" alt=""></span>`
+        : o.companyName
+          ? `<span class="logo-name">${esc(o.companyName)}</span>`
+          : ''
+      el.replaceWith(fragment(doc, html))
+      continue
+    }
+
+    el.replaceWith(fragment(doc, textValue(key, letter)))
+  }
+
+  // Each top-level page break starts a new sheet.
+  const pages: string[] = []
+  let current = ''
+  for (const node of [...root.childNodes]) {
+    if (node instanceof Element && node.classList.contains('page-break')) {
+      pages.push(current)
+      current = ''
+      continue
+    }
+    current += node instanceof Element ? node.outerHTML : node.textContent ?? ''
+  }
+  pages.push(current)
+  return pages.map((p) => `<section class="page sprint-doc">${p}</section>`).join('\n')
+}
+
+/** The whole letter as a standalone HTML document. */
 export function renderSprintLetterHtml(letter: SprintLetter, o: RenderOptions = {}): string {
-  const b = letter.body
-  const number = sprintNumber(b, letter.seq, letter.year)
-  const perihal = val(letter.perihal, '<span class="ph">…berisi kasus yang akan diinvestigasi…</span>')
-
-  const menimbang = [
-    val(letter.menimbang, '<span class="ph">… berisi surat permintaan investigasi / laporan adanya indikasi tindak fraud / kejahatan keamanan lainnya …</span>'),
-    ...letter.menimbangExtra.filter((s) => s.trim()).map((s) => text(s.trim())),
-    ...b.menimbangFixed.filter((s) => s.trim()).map((s) => text(fill(s, letter))),
-  ]
-  const dasar = letter.dasar.filter((s) => s.trim()).map((s) => text(fill(s, letter)))
-  const untuk = [
-    `${text(b.untukObjekPrefix)} ${val(letter.objek)}`,
-    ...letter.untukExtra.filter((s) => s.trim()).map((s) => text(s.trim())),
-    ...b.untukFixed.filter((s) => s.trim()).map((s) => text(fill(s, letter))),
-  ]
-
+  const number = sprintNumber(letter.body, letter.seq, letter.year)
   return `<!doctype html><html lang="id"><head><meta charset="utf-8">
-<title>${esc(b.letterTitle)} ${esc(number)}</title><style>${STYLE}</style></head><body>
-<section class="page">
-  <div class="head">
-    <div>
-      ${b.lampiranCode.trim() ? `<p class="code">${esc(b.lampiranCode)}</p>` : ''}
-      <p class="b">${esc(b.headerTitle)}</p>
-    </div>
-    ${logoBlock(o)}
-  </div>
-
-  <div class="center title">
-    <div class="b u">${esc(b.letterTitle)}</div>
-    <div>No. ${esc(number)}</div>
-  </div>
-  <div class="center gap">
-    <div class="b">TENTANG</div>
-    <div class="b">${esc(b.tentang)}</div>
-    <div>(${perihal})</div>
-  </div>
-  <div class="center gap b">${esc(b.issuerTitle)}</div>
-
-  <table class="cl">
-    <tr><td class="lbl">Menimbang</td><td class="col">:</td><td>${ol(menimbang)}</td></tr>
-    <tr><td class="lbl">Dasar</td><td class="col">:</td><td>${dasar.length ? ol(dasar) : PH}</td></tr>
-  </table>
-
-  <div class="center b gap">MEMERINTAHKAN</div>
-
-  <table class="cl">
-    <tr><td class="lbl">Kepada</td><td class="col">:</td><td class="just">${text(fill(b.kepada, letter))}</td></tr>
-    <tr><td class="lbl">Untuk</td><td class="col">:</td><td>
-      <div class="just">${text(fill(b.untukIntro, letter))}</div>
-      ${ol(untuk)}
-    </td></tr>
-  </table>
-  <div class="close">${b.penutup.filter((s) => s.trim()).map((s) => `<p>${text(fill(s, letter))}</p>`).join('')}</div>
-
-  <div class="sign">
-    <p>${esc(b.letterTitle.toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase()))}</p>
-    <p class="u">Nomor : ${esc(number)}</p>
-    <p style="margin-top:4mm">Ditetapkan di ${val(letter.place)}</p>
-    <p>Pada tanggal ${letter.dateIssued ? esc(formatTanggal(letter.dateIssued)) : '<span class="ph">(tanggal, bulan, tahun)</span>'}</p>
-    <div class="rule"></div>
-    <p>${val(letter.signerTitle)},</p>
-    <div class="space"></div>
-    <p>(${val(letter.signerName, '<span class="ph">Nama Lengkap</span>')})</p>
-  </div>
-</section>
-
-<section class="page">
-  <div class="head"><div></div>${logoBlock(o)}</div>
-  <div class="center gap">
-    <div class="b">${esc(b.lampiranTitle)}</div>
-    <div>${letter.perihal.trim() ? text(letter.perihal.trim()) : '<span class="ph">…(berisi kasus yang akan diinvestigasi)…</span>'}</div>
-  </div>
-  ${teamTable(letter)}
-</section>
+<title>Surat Perintah ${esc(number)}</title><style>${PAGE_CSS}${SPRINT_DOC_CSS}</style></head><body>
+${fillDocument(letter, o)}
 </body></html>`
 }
 

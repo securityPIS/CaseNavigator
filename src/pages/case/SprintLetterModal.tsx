@@ -4,6 +4,7 @@ import { AlertTriangle, CheckCircle2, KeyRound, Paperclip, Plus, Printer, Upload
 import { db } from '@/domain/db'
 import type { Role, Sprint, SprintLetter, SprintTeamEntry, SprintTeamRole, Template, User } from '@/domain/types'
 import {
+  fieldsIn,
   letterProblems,
   membersFromLetter,
   newLetter,
@@ -98,6 +99,7 @@ export function SprintLetterModal({
 
   const set = <K extends keyof SprintLetter>(key: K, value: SprintLetter[K]) => setLetter((l) => (l ? { ...l, [key]: value } : l))
   const b = letter.body
+  const used = fieldsIn(b.html)
   const number = sprintNumber(b, letter.seq, letter.year)
   const problems = letterProblems(letter)
   const granted = membersFromLetter(letter)
@@ -138,7 +140,7 @@ export function SprintLetterModal({
       const clean: SprintLetter = {
         ...letter,
         menimbangExtra: letter.menimbangExtra.map((s) => s.trim()).filter(Boolean),
-        dasar: letter.dasar.map((s) => s.trim()).filter(Boolean),
+        dasarExtra: letter.dasarExtra.map((s) => s.trim()).filter(Boolean),
         untukExtra: letter.untukExtra.map((s) => s.trim()).filter(Boolean),
         team: letter.team.map((e) => ({ ...e, name: e.name.trim(), employeeNo: e.employeeNo.trim(), jobTitle: e.jobTitle.trim() })),
       }
@@ -266,49 +268,67 @@ export function SprintLetterModal({
           </FormSection>
 
           {/* B ─ Menimbang */}
-          <FormSection title="Menimbang">
-            <Field label="1. Dasar permintaan" required hint="The investigation request or the report of suspected fraud / security incident that triggered this order — cite its number, date and sender.">
-              <Textarea
-                rows={3}
-                value={letter.menimbang}
-                onChange={(e) => set('menimbang', e.target.value)}
-                placeholder="Surat permintaan investigasi No. … tanggal … perihal …"
-              />
-            </Field>
-            <ListEditor
-              items={letter.menimbangExtra}
-              onChange={(v) => set('menimbangExtra', v)}
-              numberFrom={2}
-              addLabel="Add consideration for this case"
-            />
-            <FixedPoints items={b.menimbangFixed} from={2 + letter.menimbangExtra.length} />
-          </FormSection>
+          {(used.has('menimbang') || used.has('menimbang_tambahan')) && (
+            <FormSection title="Menimbang">
+              {used.has('menimbang') && (
+                <Field
+                  label="Dasar permintaan"
+                  required
+                  hint="The investigation request or the report of suspected fraud / security incident that triggered this order — cite its number, date and sender."
+                >
+                  <Textarea
+                    rows={3}
+                    value={letter.menimbang}
+                    onChange={(e) => set('menimbang', e.target.value)}
+                    placeholder="Surat permintaan investigasi No. … tanggal … perihal …"
+                  />
+                </Field>
+              )}
+              {used.has('menimbang_tambahan') && (
+                <div>
+                  <p className="mb-1.5 text-[12px] font-medium text-ink-2">Menimbang tambahan</p>
+                  <ListEditor
+                    items={letter.menimbangExtra}
+                    onChange={(v) => set('menimbangExtra', v)}
+                    addLabel="Add consideration for this case"
+                  />
+                </div>
+              )}
+            </FormSection>
+          )}
 
           {/* C ─ Dasar */}
-          <FormSection title="Dasar" hint="Starts as the template's list. Add or adjust for this case.">
-            <ListEditor items={letter.dasar} onChange={(v) => set('dasar', v)} addLabel="Add legal basis" />
-          </FormSection>
+          {used.has('dasar_tambahan') && (
+            <FormSection title="Dasar tambahan" hint="The template's own Dasar always prints. Add anything this case needs on top.">
+              <ListEditor items={letter.dasarExtra} onChange={(v) => set('dasarExtra', v)} addLabel="Add legal basis" />
+            </FormSection>
+          )}
 
           {/* D ─ Untuk */}
-          <FormSection title="Memerintahkan — Untuk">
-            <Field label={`1. ${b.untukObjekPrefix} …`} required>
-              <Textarea rows={2} value={letter.objek} onChange={(e) => set('objek', e.target.value)} placeholder="Objek / ruang lingkup investigasi" />
-            </Field>
-            <ListEditor
-              items={letter.untukExtra}
-              onChange={(v) => set('untukExtra', v)}
-              numberFrom={2}
-              addLabel="Add task for this case"
-            />
-            <FixedPoints items={b.untukFixed} from={2 + letter.untukExtra.length} />
-          </FormSection>
+          {(used.has('objek') || used.has('untuk_tambahan')) && (
+            <FormSection title="Memerintahkan — Untuk">
+              {used.has('objek') && (
+                <Field label="Objek investigasi" required hint="Completes “Melakukan kegiatan investigasi terkait dengan …”.">
+                  <Textarea rows={2} value={letter.objek} onChange={(e) => set('objek', e.target.value)} placeholder="Objek / ruang lingkup investigasi" />
+                </Field>
+              )}
+              {used.has('untuk_tambahan') && (
+                <div>
+                  <p className="mb-1.5 text-[12px] font-medium text-ink-2">Tugas tambahan</p>
+                  <ListEditor items={letter.untukExtra} onChange={(v) => set('untukExtra', v)} addLabel="Add task for this case" />
+                </div>
+              )}
+            </FormSection>
+          )}
 
           {/* E ─ Penetapan */}
           <FormSection title="Penetapan & tanda tangan">
             <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Ditetapkan di" required>
-                <Input value={letter.place} onChange={(e) => set('place', e.target.value)} />
-              </Field>
+              {used.has('tempat') && (
+                <Field label="Ditetapkan di" required>
+                  <Input value={letter.place} onChange={(e) => set('place', e.target.value)} />
+                </Field>
+              )}
               <Field label="Pada tanggal" required hint="The order is in force from this date.">
                 <Input
                   type="date"
@@ -316,12 +336,16 @@ export function SprintLetterModal({
                   onChange={(e) => setLetter({ ...letter, dateIssued: e.target.value, year: e.target.value.slice(0, 4) || letter.year })}
                 />
               </Field>
-              <Field label="Nama penandatangan" required>
-                <Input value={letter.signerName} onChange={(e) => set('signerName', e.target.value)} placeholder="Nama lengkap" />
-              </Field>
-              <Field label="Jabatan penandatangan" required hint="e.g. Plt. VP HSSE when signed by an acting officer.">
-                <Input value={letter.signerTitle} onChange={(e) => set('signerTitle', e.target.value)} />
-              </Field>
+              {used.has('nama_penandatangan') && (
+                <Field label="Nama penandatangan" required>
+                  <Input value={letter.signerName} onChange={(e) => set('signerName', e.target.value)} placeholder="Nama lengkap" />
+                </Field>
+              )}
+              {used.has('jabatan_penandatangan') && (
+                <Field label="Jabatan penandatangan" required hint="e.g. Plt. VP HSSE when signed by an acting officer.">
+                  <Input value={letter.signerTitle} onChange={(e) => set('signerTitle', e.target.value)} />
+                </Field>
+              )}
               <Field label="Berlaku sampai" hint="Not printed. Leave empty for an order that stands until revoked.">
                 <Input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
               </Field>
@@ -330,7 +354,7 @@ export function SprintLetterModal({
 
           {/* F ─ Susunan tim */}
           <FormSection
-            title={`Lampiran — ${b.lampiranTitle}`}
+            title="Lampiran — Susunan tim"
             hint="Pick an app user to grant them access through the order; type a name for people outside the app (Pembina, holding advisors…)."
           >
             {b.roles.map((role) => (
@@ -397,24 +421,6 @@ export function SprintLetterModal({
         </div>
       </div>
     </Modal>
-  )
-}
-
-/** The template's standing points, shown read-only where they will print. */
-function FixedPoints({ items, from }: { items: string[]; from: number }) {
-  if (items.length === 0) return null
-  return (
-    <div className="rounded-lg border border-line-soft bg-abyss/20 px-3 py-2">
-      <p className="mb-1 text-[10px] font-medium uppercase tracking-[0.07em] text-ink-4">From the template</p>
-      <ol className="space-y-1">
-        {items.map((s, i) => (
-          <li key={i} className="flex gap-2 text-[11px] leading-relaxed text-ink-4">
-            <span className="w-4 shrink-0 text-right tnum">{from + i}.</span>
-            <span>{s}</span>
-          </li>
-        ))}
-      </ol>
-    </div>
   )
 }
 
