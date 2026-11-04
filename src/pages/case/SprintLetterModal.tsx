@@ -35,14 +35,21 @@ export function SprintLetterModal({
   sprint,
   users,
   roles,
+  menimbangHint,
   onClose,
+  onSaved,
 }: {
   caseId: string
   /** The draft being continued. Absent = a new order. */
   sprint?: Sprint
   users: User[]
   roles: Role[]
+  /** Starting text for Menimbang point 1 — drawn from the case's sumber
+      laporan. */
+  menimbangHint?: string
   onClose: () => void
+  /** Called with the order's id once it is saved. */
+  onSaved?: (id: string) => void
 }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const templates = useLiveQuery(() => db.templates.where('kind').equals('sprint').toArray(), [])
@@ -70,7 +77,7 @@ export function SprintLetterModal({
     const base = newLetter(t, { perihal, dateIssued })
     const all = await db.sprints.toArray()
     const used = all.filter((s) => s.letter && s.letter.year === base.year).length
-    setLetter({ ...base, seq: String(used + 1) })
+    setLetter({ ...base, seq: String(used + 1), menimbang: menimbangHint ?? '' })
   }
 
   const html = useMemo(
@@ -172,6 +179,7 @@ export function SprintLetterModal({
         updatedAt: now,
       }
       await db.sprints.put(record)
+      onSaved?.(record.id)
 
       if (issue) {
         const n = record.members.length

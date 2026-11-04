@@ -1,4 +1,5 @@
 import type {
+  ReportSource,
   SprintLetter,
   SprintPosition,
   SprintTeamEntry,
@@ -375,6 +376,23 @@ export function newLetter(
     signerName: '',
     signerTitle: body.issuerTitle,
     team: [],
+  }
+}
+
+/**
+ * Menimbang point 1 as suggested by the case's sumber laporan — the report
+ * that triggered the order. Only a starting point; the form keeps it editable.
+ */
+export function menimbangFromSource(src: ReportSource | undefined, perihal: string): string | undefined {
+  if (!src) return undefined
+  const about = perihal.trim() ? ` perihal ${perihal.trim()}` : ''
+  switch (src.kind) {
+    case 'wbs':
+      return `Laporan melalui Whistle Blower System (WBS) Nomor ${src.wbsNumber?.trim() || '…'}${about}.`
+    case 'management':
+      return `Management Report berupa Nota Dinas Nomor ${src.notaDinasNumber?.trim() || '…'}${about}.`
+    case 'internal':
+      return `Internal Report berupa Investigation Notes tanggal ${formatTanggal(src.recordedAt.slice(0, 10))}${about}.`
   }
 }
 

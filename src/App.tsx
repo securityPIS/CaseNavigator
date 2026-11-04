@@ -21,7 +21,6 @@ const CaseRegistrationPage = lazy(() =>
   import('@/pages/case/CaseRegistrationPage').then((m) => ({ default: m.CaseRegistrationPage })),
 )
 const NodeGraphPage = lazy(() => import('@/pages/case/NodeGraphPage').then((m) => ({ default: m.NodeGraphPage })))
-const SprintPage = lazy(() => import('@/pages/case/SprintPage').then((m) => ({ default: m.SprintPage })))
 const InterviewPage = lazy(() => import('@/pages/case/InterviewPage').then((m) => ({ default: m.InterviewPage })))
 const MailPage = lazy(() => import('@/pages/case/MailPage').then((m) => ({ default: m.MailPage })))
 const EvidencePage = lazy(() => import('@/pages/case/EvidencePage').then((m) => ({ default: m.EvidencePage })))
@@ -61,7 +60,8 @@ export function App() {
                 <Route index element={<Navigate to="registration" replace />} />
                 <Route path="registration" element={<CaseRegistrationPage />} />
                 <Route path="graph" element={<NodeGraphPage />} />
-                <Route path="sprint" element={<SprintPage />} />
+                {/* SPRINT now lives in Case Registration; old links land there. */}
+                <Route path="sprint" element={<Navigate to="../registration" replace />} />
                 <Route path="interview" element={<InterviewPage />} />
                 <Route path="mail" element={<MailPage />} />
                 <Route path="evidence" element={<EvidencePage />} />

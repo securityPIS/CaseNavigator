@@ -1030,7 +1030,7 @@ function NewBapModal({
         <Field label="Pemeriksa" hint="Only investigators named on an active SPRINT for this case can be listed.">
           {eligible.length === 0 ? (
             <p className="rounded-lg border border-warn/40 bg-warn/8 px-3 py-2.5 text-[11.5px] leading-relaxed text-ink-2">
-              No active SPRINT names an investigator on this case. Issue one on the SPRINT tab first.
+              No active SPRINT names an investigator on this case. Issue one under Case Registration first.
             </p>
           ) : (
             <div className="space-y-1 rounded-lg border border-line bg-abyss/35 p-2">

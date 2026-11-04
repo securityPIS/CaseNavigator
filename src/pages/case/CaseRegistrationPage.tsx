@@ -5,33 +5,36 @@ import {
   ArrowLeft,
   Briefcase,
   ClipboardList,
-  Clock,
   Download,
+  FilePen,
+  FileSignature,
   FileText,
   Film,
   Image as ImageIcon,
   KeyRound,
+  Landmark,
+  Megaphone,
+  NotebookPen,
+  Paperclip,
+  Pencil,
+  Radio,
   ShieldCheck,
   Trash2,
   Upload,
   Users,
+  X,
 } from 'lucide-react'
 import { db } from '@/domain/db'
 import { can, sprintState } from '@/domain/access'
-import type { Case, CaseDocument, Role, Sprint, User } from '@/domain/types'
-import {
-  cn,
-  daysUntil,
-  formatBytes,
-  formatDate,
-  formatDateTime,
-  PRIORITY_META,
-  STATUS_META,
-  uid,
-} from '@/lib/utils'
-import { Avatar, Badge, Button, EmptyState, IconButton, Progress, tone, Tooltip } from '@/components/ui/primitives'
+import { menimbangFromSource } from '@/domain/sprintLetter'
+import type { Case, CaseDocument, ReportSource, ReportSourceKind, Role, Sprint, User } from '@/domain/types'
+import { cn, daysUntil, formatBytes, formatDate, formatDateTime, PRIORITY_META, STATUS_META, uid } from '@/lib/utils'
+import { Avatar, Badge, Button, EmptyState, IconButton, Input, Progress, Select, Textarea, tone, Tooltip } from '@/components/ui/primitives'
+import { BlobPreview, downloadBlob } from '@/components/ui/BlobPreview'
 import { useSession } from '@/stores/session'
 import { toast } from '@/stores/toast'
+import { SprintLetterModal } from './SprintLetterModal'
+import { SprintListItem, SprintViewer, UploadSprintModal } from './SprintParts'
 
 const CATEGORY_COLOR: Record<string, string> = {
   Laporan: '#EF4444',
@@ -46,78 +49,128 @@ const categoryColor = (c?: string) => (c && CATEGORY_COLOR[c]) || '#6A7FA3'
 const docIcon = (mime?: string) =>
   mime?.startsWith('image/') ? ImageIcon : mime?.startsWith('video/') ? Film : FileText
 
+export const SOURCE_META: Record<ReportSourceKind, { label: string; blurb: string; color: string; icon: typeof Megaphone }> = {
+  wbs: { label: 'Whistle Blower System (WBS)', blurb: 'Laporan masuk lewat WBS — dicatat dengan nomor WBS.', color: '#EF4444', icon: Megaphone },
+  management: { label: 'Management Report', blurb: 'Permintaan manajemen lewat nota dinas — nomor dan dokumennya.', color: '#F59E0B', icon: Landmark },
+  internal: { label: 'Internal Report', blurb: 'Temuan tim sendiri — Investigation Notes, tanpa nomor.', color: '#3B82F6', icon: NotebookPen },
+}
+
+type Selection = { kind: 'doc' | 'sprint'; id: string } | null
+
+/**
+ * Case Registration — what the investigation stands on: the sumber laporan
+ * that opened it, the SPRINT that authorises the team, and the supporting
+ * documents. The viewer on the right shows whichever is opened: a SPRINT as
+ * the letter it prints as, or a document's preview.
+ */
 export function CaseRegistrationPage() {
   const { caseId = '' } = useParams()
   const userId = useSession((s) => s.userId)
   const [params, setParams] = useSearchParams()
-  const openId = params.get('doc')
+  const docId = params.get('doc')
+  const sprintId = params.get('sprint')
 
   const c = useLiveQuery(() => db.cases.get(caseId), [caseId])
   const assignee = useLiveQuery(() => (c ? db.users.get(c.assigneeId) : undefined), [c?.assigneeId])
   const users = useLiveQuery(() => db.users.toArray(), [], [])
   const roles = useLiveQuery(() => db.roles.toArray(), [], [])
-  const sprints = useLiveQuery(() => db.sprints.where('caseId').equals(caseId).toArray(), [caseId], [])
+  const sprints = useLiveQuery(
+    async () => (await db.sprints.where('caseId').equals(caseId).toArray()).sort((a, b) => b.issuedAt.localeCompare(a.issuedAt)),
+    [caseId],
+  )
 
   const me = users.find((u) => u.id === userId)
+  const myRole = roles.find((r) => r.id === me?.role)
+  const manageSprint = can(myRole, 'sprint.manage')
+  const editCase = can(myRole, 'case.edit')
+
+  const [drafting, setDrafting] = useState<Sprint | 'new' | null>(null)
+  const [uploading, setUploading] = useState(false)
+
   const documents = useMemo(
     () => [...(c?.documents ?? [])].sort((a, b) => a.uploadedAt.localeCompare(b.uploadedAt)),
     [c?.documents],
   )
-  const open = useMemo(() => documents.find((d) => d.id === openId) ?? null, [documents, openId])
+  const openDoc = useMemo(() => documents.find((d) => d.id === docId) ?? null, [documents, docId])
+  const openSprint = useMemo(() => sprints?.find((s) => s.id === sprintId) ?? null, [sprints, sprintId])
 
-  const select = (id: string | null, replace = false) =>
+  const select = (sel: Selection, replace = false) =>
     setParams(
       (prev) => {
         const next = new URLSearchParams(prev)
-        if (id) next.set('doc', id)
-        else next.delete('doc')
+        next.delete('doc')
+        next.delete('sprint')
+        if (sel) next.set(sel.kind, sel.id)
         return next
       },
       { replace },
     )
 
-  // On a wide screen, open the first document straight away so the viewer isn't
-  // empty on arrival. Mobile keeps the list in front until the user taps one.
+  // On a wide screen, open something straight away so the viewer isn't empty
+  // on arrival — the order in force first, since it is what the case runs on.
+  // Mobile keeps the list in front until the user taps one.
   useEffect(() => {
-    if (open || documents.length === 0) return
-    if (window.matchMedia('(min-width: 768px)').matches) select(documents[0].id, true)
+    if (!sprints || openDoc || openSprint) return
+    if (!window.matchMedia('(min-width: 768px)').matches) return
+    const sp = sprints.find((s) => sprintState(s) === 'active') ?? sprints[0]
+    if (sp) select({ kind: 'sprint', id: sp.id }, true)
+    else if (documents[0]) select({ kind: 'doc', id: documents[0].id }, true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [documents, open])
+  }, [sprints, documents, openDoc, openSprint])
 
-  const patchDocs = (next: CaseDocument[]) =>
-    db.cases.update(caseId, { documents: next, updatedAt: new Date().toISOString() })
+  const storeFile = async (file: File, category: string, note?: string): Promise<CaseDocument> => {
+    const blobId = uid('blob')
+    await db.blobs.add({ id: blobId, data: file })
+    return {
+      id: uid('cd'),
+      name: file.name,
+      category,
+      blobId,
+      mime: file.type || 'application/octet-stream',
+      size: file.size,
+      uploadedBy: me?.name ?? 'Unknown user',
+      uploadedAt: new Date().toISOString(),
+      note,
+    }
+  }
 
   const addFiles = async (list: FileList | null) => {
     if (!list?.length || !c) return
     const added: CaseDocument[] = []
-    for (const file of list) {
-      const blobId = uid('blob')
-      await db.blobs.add({ id: blobId, data: file })
-      added.push({
-        id: uid('cd'),
-        name: file.name,
-        category: 'Lampiran',
-        blobId,
-        mime: file.type || 'application/octet-stream',
-        size: file.size,
-        uploadedBy: me?.name ?? 'Unknown user',
-        uploadedAt: new Date().toISOString(),
-      })
-    }
-    await patchDocs([...(c.documents ?? []), ...added])
+    for (const file of list) added.push(await storeFile(file, 'Lampiran'))
+    await db.cases.update(caseId, { documents: [...(c.documents ?? []), ...added], updatedAt: new Date().toISOString() })
     toast.success('Dokumen ditambahkan', `${added.length} berkas tersimpan lokal di browser ini.`)
-    if (added[0]) select(added[0].id, true)
+    if (added[0]) select({ kind: 'doc', id: added[0].id }, true)
   }
 
   const removeDoc = async (doc: CaseDocument) => {
     if (!c) return
+    const isNota = c.reportSource?.notaDinasDocId === doc.id
+    if (isNota && !window.confirm(`“${doc.name}” adalah nota dinas sumber laporan. Tetap hapus?`)) return
     if (doc.blobId) await db.blobs.delete(doc.blobId)
-    await patchDocs((c.documents ?? []).filter((d) => d.id !== doc.id))
-    if (openId === doc.id) select(null, true)
+    await db.cases.update(caseId, {
+      documents: (c.documents ?? []).filter((d) => d.id !== doc.id),
+      ...(isNota ? { reportSource: { ...c.reportSource!, notaDinasDocId: undefined } } : {}),
+      updatedAt: new Date().toISOString(),
+    })
+    if (docId === doc.id) select(null, true)
     toast.success('Dokumen dihapus', `“${doc.name}” dihapus dari registrasi perkara.`)
   }
 
-  if (!c) {
+  const saveSource = async (src: ReportSource, notaFile: File | null) => {
+    if (!c) return
+    let docs = c.documents ?? []
+    let next = src
+    if (src.kind === 'management' && notaFile) {
+      const doc = await storeFile(notaFile, 'Nota Dinas', `Nota Dinas Nomor ${src.notaDinasNumber} — sumber laporan.`)
+      docs = [...docs, doc]
+      next = { ...src, notaDinasDocId: doc.id }
+    }
+    await db.cases.update(caseId, { reportSource: next, documents: docs, updatedAt: new Date().toISOString() })
+    toast.success('Sumber laporan disimpan', SOURCE_META[src.kind].label)
+  }
+
+  if (!c || !sprints) {
     return (
       <div className="flex h-full items-center justify-center">
         <EmptyState icon={<ClipboardList size={22} />} title="Memuat perkara…" description="Menyiapkan registrasi perkara." />
@@ -125,17 +178,75 @@ export function CaseRegistrationPage() {
     )
   }
 
+  const opened = openSprint || openDoc
+
   return (
     <div className="flex h-full">
-      {/* Left — details, access, document list */}
-      <div className={cn('flex w-full shrink-0 flex-col border-r border-line-soft md:w-[420px]', open && 'hidden md:flex')}>
+      {/* Left — registration */}
+      <div className={cn('flex w-full shrink-0 flex-col border-r border-line-soft md:w-[420px]', opened && 'hidden md:flex')}>
         <div className="min-h-0 flex-1 overflow-y-auto">
           <CaseDetails c={c} assignee={assignee ?? undefined} />
+
+          <ReportSourceSection
+            source={c.reportSource}
+            documents={documents}
+            editable={editCase}
+            recordedBy={me?.name}
+            onOpenDoc={(id) => select({ kind: 'doc', id })}
+            onSave={saveSource}
+          />
+
+          <Section
+            title={`SPRINT · ${sprints.length}`}
+            icon={<FileSignature size={13} />}
+            action={
+              manageSprint && (
+                <div className="flex items-center gap-1">
+                  <Tooltip label="Unggah SPRINT bertanda tangan dari luar aplikasi">
+                    <IconButton label="Unggah SPRINT" size={28} onClick={() => setUploading(true)}>
+                      <Upload size={13} />
+                    </IconButton>
+                  </Tooltip>
+                  <Button size="xs" variant="primary" icon={<FilePen size={12} />} onClick={() => setDrafting('new')}>
+                    Buat SPRINT
+                  </Button>
+                </div>
+              )
+            }
+          >
+            {sprints.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-line-strong bg-abyss/30 px-4 py-5 text-center">
+                <p className="text-[12px] font-medium text-ink-2">Belum ada Surat Perintah</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-ink-4">
+                  Tanpa SPRINT aktif, tidak ada penyidik yang dapat membuka perkara ini.
+                </p>
+                {manageSprint && (
+                  <Button className="mt-3" size="sm" variant="primary" icon={<FilePen size={13} />} onClick={() => setDrafting('new')}>
+                    Buat SPRINT dari template
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {sprints.map((s) => (
+                  <SprintListItem
+                    key={s.id}
+                    sprint={s}
+                    active={s.id === sprintId}
+                    onSelect={() => select({ kind: 'sprint', id: s.id })}
+                  />
+                ))}
+              </div>
+            )}
+          </Section>
+
           <AccessList sprints={sprints} users={users} roles={roles} meId={userId} />
+
           <DocumentList
             documents={documents}
-            openId={openId}
-            onSelect={(id) => select(id)}
+            openId={docId}
+            notaId={c.reportSource?.notaDinasDocId}
+            onSelect={(id) => select({ kind: 'doc', id })}
             onAdd={addFiles}
             onRemove={removeDoc}
           />
@@ -143,24 +254,54 @@ export function CaseRegistrationPage() {
       </div>
 
       {/* Right — viewer */}
-      <div className={cn('min-w-0 flex-1', !open && 'hidden md:block')}>
-        {open ? (
-          <DocumentViewer key={open.id} doc={open} onBack={() => select(null)} onRemove={() => removeDoc(open)} />
+      <div className={cn('min-w-0 flex-1', !opened && 'hidden md:block')}>
+        {openSprint ? (
+          <SprintViewer
+            key={openSprint.id}
+            sprint={openSprint}
+            users={users}
+            manage={manageSprint}
+            onBack={() => select(null)}
+            onEditDraft={() => setDrafting(openSprint)}
+          />
+        ) : openDoc ? (
+          <DocumentViewer key={openDoc.id} doc={openDoc} onBack={() => select(null)} onRemove={() => removeDoc(openDoc)} />
         ) : (
           <div className="flex h-full items-center justify-center p-6">
             <EmptyState
               icon={<FileText size={22} />}
-              title="Belum ada dokumen dipilih"
-              description="Pilih dokumen dari daftar di kiri untuk melihat pratinjaunya di sini."
+              title="Belum ada yang dibuka"
+              description="Pilih SPRINT atau dokumen pendukung di kiri untuk melihatnya di sini."
             />
           </div>
         )}
       </div>
+
+      {drafting && (
+        <SprintLetterModal
+          caseId={caseId}
+          sprint={drafting === 'new' ? undefined : drafting}
+          users={users}
+          roles={roles}
+          menimbangHint={menimbangFromSource(c.reportSource, c.title)}
+          onClose={() => setDrafting(null)}
+          onSaved={(id) => select({ kind: 'sprint', id }, true)}
+        />
+      )}
+      {uploading && (
+        <UploadSprintModal
+          caseId={caseId}
+          users={users}
+          roles={roles}
+          onClose={() => setUploading(false)}
+          onCreated={(id) => select({ kind: 'sprint', id }, true)}
+        />
+      )}
     </div>
   )
 }
 
-/* --------------------------------------------------------- Case details */
+/* -------------------------------------------------------------- Layout */
 
 function Section({ title, icon, action, children }: { title: string; icon: ReactNode; action?: ReactNode; children: ReactNode }) {
   return (
@@ -183,6 +324,8 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
     </div>
   )
 }
+
+/* --------------------------------------------------------- Case details */
 
 function CaseDetails({ c, assignee }: { c: Case; assignee?: User }) {
   const priority = PRIORITY_META[c.priority]
@@ -249,6 +392,308 @@ function CaseDetails({ c, assignee }: { c: Case; assignee?: User }) {
   )
 }
 
+/* -------------------------------------------------------- Report source */
+
+function ReportSourceSection({
+  source,
+  documents,
+  editable,
+  recordedBy,
+  onOpenDoc,
+  onSave,
+}: {
+  source?: ReportSource
+  documents: CaseDocument[]
+  editable: boolean
+  recordedBy?: string
+  onOpenDoc: (id: string) => void
+  onSave: (src: ReportSource, notaFile: File | null) => Promise<void>
+}) {
+  const [editing, setEditing] = useState(false)
+
+  return (
+    <Section
+      title="Sumber Laporan"
+      icon={<Radio size={13} />}
+      action={
+        editable &&
+        source &&
+        !editing && (
+          <Button size="xs" variant="ghost" icon={<Pencil size={11} />} onClick={() => setEditing(true)}>
+            Ubah
+          </Button>
+        )
+      }
+    >
+      {editing ? (
+        <ReportSourceForm
+          initial={source}
+          documents={documents}
+          recordedBy={recordedBy}
+          onCancel={() => setEditing(false)}
+          onSave={async (src, file) => {
+            await onSave(src, file)
+            setEditing(false)
+          }}
+        />
+      ) : source ? (
+        <ReportSourceView source={source} documents={documents} onOpenDoc={onOpenDoc} />
+      ) : (
+        <div className="rounded-xl border border-dashed border-line-strong bg-abyss/30 px-4 py-4 text-center">
+          <p className="text-[12px] font-medium text-ink-2">Sumber laporan belum dicatat</p>
+          <p className="mt-1 text-[11px] text-ink-4">WBS, Management Report, atau Internal Report.</p>
+          {editable && (
+            <Button className="mt-3" size="sm" variant="outline" icon={<Radio size={13} />} onClick={() => setEditing(true)}>
+              Catat sumber laporan
+            </Button>
+          )}
+        </div>
+      )}
+    </Section>
+  )
+}
+
+function ReportSourceView({
+  source,
+  documents,
+  onOpenDoc,
+}: {
+  source: ReportSource
+  documents: CaseDocument[]
+  onOpenDoc: (id: string) => void
+}) {
+  const meta = SOURCE_META[source.kind]
+  const nota = documents.find((d) => d.id === source.notaDinasDocId)
+  return (
+    <div className="rounded-lg border border-line-soft bg-abyss/30 p-3">
+      <div className="flex items-center gap-2.5">
+        <span className="tone flex size-8 shrink-0 items-center justify-center rounded-lg border" style={tone(meta.color)}>
+          <meta.icon size={15} />
+        </span>
+        <div className="min-w-0">
+          <p className="text-[12.5px] font-medium text-ink">{meta.label}</p>
+          <p className="text-[10px] text-ink-4">
+            Dicatat {source.recordedBy ? `oleh ${source.recordedBy} · ` : ''}
+            <span className="tnum">{formatDate(source.recordedAt)}</span>
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-2.5">
+        {source.kind === 'wbs' && (
+          <Row label="Nomor WBS">
+            <span className="font-medium tnum">{source.wbsNumber}</span>
+          </Row>
+        )}
+        {source.kind === 'management' && (
+          <>
+            <Row label="No. Nota Dinas">
+              <span className="font-medium tnum">{source.notaDinasNumber}</span>
+            </Row>
+            <Row label="Dokumen">
+              {nota ? (
+                <button onClick={() => onOpenDoc(nota.id)} className="flex max-w-full items-center gap-1.5 text-left text-brand-bright hover:underline">
+                  <Paperclip size={11} className="shrink-0" />
+                  <span className="truncate">{nota.name}</span>
+                </button>
+              ) : (
+                <span className="text-warn">Dokumen nota dinas belum dilampirkan</span>
+              )}
+            </Row>
+          </>
+        )}
+        {source.kind === 'internal' && (
+          <div>
+            <p className="mb-1 text-[11px] text-ink-4">Investigation Notes</p>
+            <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-ink-2">{source.notes}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ReportSourceForm({
+  initial,
+  documents,
+  recordedBy,
+  onCancel,
+  onSave,
+}: {
+  initial?: ReportSource
+  documents: CaseDocument[]
+  recordedBy?: string
+  onCancel: () => void
+  onSave: (src: ReportSource, notaFile: File | null) => Promise<void>
+}) {
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [kind, setKind] = useState<ReportSourceKind>(initial?.kind ?? 'wbs')
+  const [wbsNumber, setWbsNumber] = useState(initial?.wbsNumber ?? '')
+  const [notaNumber, setNotaNumber] = useState(initial?.notaDinasNumber ?? '')
+  const [notaDocId, setNotaDocId] = useState(initial?.notaDinasDocId ?? '')
+  const [notaFile, setNotaFile] = useState<File | null>(null)
+  const [notes, setNotes] = useState(initial?.notes ?? '')
+  const [saving, setSaving] = useState(false)
+
+  const valid =
+    kind === 'wbs'
+      ? !!wbsNumber.trim()
+      : kind === 'management'
+        ? !!notaNumber.trim() && (!!notaFile || !!notaDocId)
+        : !!notes.trim()
+
+  const save = async () => {
+    if (!valid) return
+    setSaving(true)
+    try {
+      const base = { kind, recordedBy: recordedBy ?? initial?.recordedBy, recordedAt: new Date().toISOString() }
+      const src: ReportSource =
+        kind === 'wbs'
+          ? { ...base, wbsNumber: wbsNumber.trim() }
+          : kind === 'management'
+            ? { ...base, notaDinasNumber: notaNumber.trim(), notaDinasDocId: notaFile ? undefined : notaDocId }
+            : { ...base, notes: notes.trim() }
+      await onSave(src, kind === 'management' ? notaFile : null)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="space-y-1.5" role="radiogroup" aria-label="Sumber laporan">
+        {(Object.keys(SOURCE_META) as ReportSourceKind[]).map((k, i) => {
+          const m = SOURCE_META[k]
+          const on = kind === k
+          return (
+            <button
+              key={k}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              onClick={() => setKind(k)}
+              className={cn(
+                'flex w-full items-start gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors',
+                on ? 'border-brand/50 bg-brand/8' : 'border-line-soft hover:border-line-strong',
+              )}
+            >
+              <span
+                className={cn(
+                  'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border',
+                  on ? 'border-brand' : 'border-line-strong',
+                )}
+              >
+                {on && <span className="size-2 rounded-full bg-brand" />}
+              </span>
+              <span className="min-w-0">
+                <span className="block text-[12px] font-medium text-ink">
+                  {i + 1}. {m.label}
+                </span>
+                <span className="block text-[10.5px] leading-snug text-ink-4">{m.blurb}</span>
+              </span>
+            </button>
+          )
+        })}
+      </div>
+
+      {kind === 'wbs' && (
+        <label className="block">
+          <span className="mb-1.5 block text-[12px] font-medium text-ink-2">
+            Nomor WBS <span className="text-danger">*</span>
+          </span>
+          <Input autoFocus value={wbsNumber} onChange={(e) => setWbsNumber(e.target.value)} placeholder="mis. WBS-2026-0117" />
+        </label>
+      )}
+
+      {kind === 'management' && (
+        <>
+          <label className="block">
+            <span className="mb-1.5 block text-[12px] font-medium text-ink-2">
+              Nomor Nota Dinas <span className="text-danger">*</span>
+            </span>
+            <Input autoFocus value={notaNumber} onChange={(e) => setNotaNumber(e.target.value)} placeholder="mis. 041/PIS0400/2026-S0" />
+          </label>
+          <div>
+            <span className="mb-1.5 block text-[12px] font-medium text-ink-2">
+              Dokumen Nota Dinas <span className="text-danger">*</span>
+            </span>
+            {notaFile ? (
+              <div className="flex items-center gap-2.5 rounded-lg border border-brand/40 bg-brand/8 px-3 py-2">
+                <Paperclip size={13} className="shrink-0 text-brand-bright" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[12px] text-ink">{notaFile.name}</span>
+                  <span className="text-[10.5px] text-ink-4 tnum">{formatBytes(notaFile.size)}</span>
+                </span>
+                <IconButton label="Hapus berkas" size={24} onClick={() => setNotaFile(null)}>
+                  <X size={12} />
+                </IconButton>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <button
+                  type="button"
+                  onClick={() => fileRef.current?.click()}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-line-strong bg-abyss/35 px-3 py-3 text-[12px] text-ink-2 transition-colors hover:border-brand/60 hover:bg-brand/6"
+                >
+                  <Upload size={14} /> Unggah nota dinas
+                </button>
+                {documents.length > 0 && (
+                  <Select
+                    aria-label="Atau pilih dari dokumen pendukung"
+                    className="h-8 text-[12px]"
+                    value={notaDocId}
+                    onChange={(e) => setNotaDocId(e.target.value)}
+                    options={[
+                      { value: '', label: '— atau pilih dari dokumen pendukung —' },
+                      ...documents.map((d) => ({ value: d.id, label: d.name })),
+                    ]}
+                  />
+                )}
+              </div>
+            )}
+            <input
+              ref={fileRef}
+              type="file"
+              hidden
+              onChange={(e) => {
+                setNotaFile(e.target.files?.[0] ?? null)
+                e.target.value = ''
+              }}
+            />
+          </div>
+        </>
+      )}
+
+      {kind === 'internal' && (
+        <label className="block">
+          <span className="mb-1.5 block text-[12px] font-medium text-ink-2">
+            Investigation Notes <span className="text-danger">*</span>
+          </span>
+          <Textarea
+            autoFocus
+            rows={5}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Temuan awal yang menjadi dasar investigasi — apa, kapan, siapa yang menemukan."
+          />
+          <span className="mt-1 block text-[10.5px] text-ink-4">Internal Report tidak bernomor.</span>
+        </label>
+      )}
+
+      <div className="flex justify-end gap-2">
+        {initial && (
+          <Button size="sm" variant="ghost" onClick={onCancel}>
+            Batal
+          </Button>
+        )}
+        <Button size="sm" variant="primary" onClick={save} disabled={!valid} loading={saving}>
+          Simpan
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 /* ------------------------------------------------------------ Access list */
 
 function AccessList({ sprints, users, roles, meId }: { sprints: Sprint[]; users: User[]; roles: Role[]; meId: string }) {
@@ -311,11 +756,7 @@ function AccessList({ sprints, users, roles, meId }: { sprints: Sprint[]; users:
             <Users size={11} /> Berdasarkan peran — melihat semua perkara
           </p>
           <div className="flex flex-wrap gap-2">
-            {viaRole.length === 0 ? (
-              <p className="text-[11.5px] text-ink-4">Tidak ada.</p>
-            ) : (
-              viaRole.map((u) => chip(u, true))
-            )}
+            {viaRole.length === 0 ? <p className="text-[11.5px] text-ink-4">Tidak ada.</p> : viaRole.map((u) => chip(u, true))}
           </div>
         </div>
       </div>
@@ -328,12 +769,14 @@ function AccessList({ sprints, users, roles, meId }: { sprints: Sprint[]; users:
 function DocumentList({
   documents,
   openId,
+  notaId,
   onSelect,
   onAdd,
   onRemove,
 }: {
   documents: CaseDocument[]
   openId: string | null
+  notaId?: string
   onSelect: (id: string) => void
   onAdd: (list: FileList | null) => void
   onRemove: (doc: CaseDocument) => void
@@ -343,7 +786,7 @@ function DocumentList({
 
   return (
     <Section
-      title={`Dokumen · ${documents.length}`}
+      title={`Dokumen Pendukung · ${documents.length}`}
       icon={<ClipboardList size={13} />}
       action={
         <Button size="xs" variant="outline" icon={<Upload size={12} />} onClick={browse}>
@@ -351,6 +794,7 @@ function DocumentList({
         </Button>
       }
     >
+      <p className="-mt-1.5 mb-3 text-[11px] leading-relaxed text-ink-4">Dokumen yang dijadikan dasar investigasi.</p>
       <input
         ref={fileRef}
         type="file"
@@ -374,7 +818,7 @@ function DocumentList({
         >
           <Upload size={18} className="text-ink-3" />
           <p className="mt-2 text-[12px] font-medium text-ink">Jatuhkan berkas atau klik untuk unggah</p>
-          <p className="mt-0.5 text-[10.5px] text-ink-4">Laporan, formulir registrasi, identitas, lampiran.</p>
+          <p className="mt-0.5 text-[10.5px] text-ink-4">Laporan, kronologi, bukti awal, lampiran.</p>
         </button>
       ) : (
         <ul
@@ -411,6 +855,7 @@ function DocumentList({
                             {d.category}
                           </span>
                         )}
+                        {d.id === notaId && <span className="text-brand-bright">sumber laporan</span>}
                         {d.size !== undefined && <span className="tnum">{formatBytes(d.size)}</span>}
                       </span>
                     </span>
@@ -435,73 +880,12 @@ function DocumentList({
 
 /* -------------------------------------------------------- Document viewer */
 
-/** Loads a document blob as an object URL (media/pdf) or decoded text. */
-function useDocPreview(doc: CaseDocument) {
-  const [state, setState] = useState<{ url: string | null; text: string | null; loading: boolean }>({
-    url: null,
-    text: null,
-    loading: true,
-  })
-
-  useEffect(() => {
-    if (!doc.blobId) {
-      setState({ url: null, text: null, loading: false })
-      return
-    }
-    let url: string | null = null
-    let cancelled = false
-    setState({ url: null, text: null, loading: true })
-
-    db.blobs.get(doc.blobId).then(async (rec) => {
-      if (cancelled) return
-      if (!rec) {
-        setState({ url: null, text: null, loading: false })
-        return
-      }
-      const mime = doc.mime ?? rec.data.type
-      if (mime.startsWith('text/')) {
-        const text = await rec.data.text()
-        if (!cancelled) setState({ url: null, text, loading: false })
-      } else {
-        url = URL.createObjectURL(rec.data)
-        if (cancelled) URL.revokeObjectURL(url)
-        else setState({ url, text: null, loading: false })
-      }
-    })
-
-    return () => {
-      cancelled = true
-      if (url) URL.revokeObjectURL(url)
-    }
-  }, [doc.blobId, doc.mime])
-
-  return state
-}
-
-async function downloadDoc(doc: CaseDocument) {
-  if (!doc.blobId) return
-  const rec = await db.blobs.get(doc.blobId)
-  if (!rec) {
-    toast.error('Berkas hilang', 'Dokumen tidak ditemukan di browser ini.')
-    return
-  }
-  const url = URL.createObjectURL(rec.data)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = doc.name
-  a.click()
-  URL.revokeObjectURL(url)
-}
-
 function DocumentViewer({ doc, onBack, onRemove }: { doc: CaseDocument; onBack: () => void; onRemove: () => void }) {
-  const { url, text, loading } = useDocPreview(doc)
-  const mime = doc.mime ?? ''
   const color = categoryColor(doc.category)
   const Icon = docIcon(doc.mime)
 
   return (
     <div className="flex h-full flex-col animate-fade-in">
-      {/* Toolbar */}
       <header className="flex shrink-0 items-center gap-3 border-b border-line-soft px-4 py-2.5">
         <IconButton label="Kembali ke daftar" className="md:hidden" onClick={onBack}>
           <ArrowLeft size={16} />
@@ -521,7 +905,7 @@ function DocumentViewer({ doc, onBack, onRemove }: { doc: CaseDocument; onBack: 
           </p>
         </div>
 
-        <Button size="sm" variant="outline" icon={<Download size={13} />} onClick={() => downloadDoc(doc)}>
+        <Button size="sm" variant="outline" icon={<Download size={13} />} onClick={() => downloadBlob(doc.blobId, doc.name)}>
           Unduh
         </Button>
         <Tooltip label="Hapus dokumen">
@@ -537,40 +921,8 @@ function DocumentViewer({ doc, onBack, onRemove }: { doc: CaseDocument; onBack: 
         </p>
       )}
 
-      {/* Preview surface */}
       <div className="min-h-0 flex-1 overflow-auto bg-abyss/20 p-4">
-        {loading ? (
-          <div className="flex h-full items-center justify-center text-[12px] text-ink-4">Memuat pratinjau…</div>
-        ) : mime.startsWith('image/') && url ? (
-          <div className="flex min-h-full items-center justify-center">
-            <img src={url} alt={doc.name} className="max-w-full rounded-lg border border-line shadow-lg" />
-          </div>
-        ) : mime.startsWith('video/') && url ? (
-          <div className="flex min-h-full items-center justify-center">
-            <video src={url} controls className="max-h-full max-w-full rounded-lg" />
-          </div>
-        ) : mime === 'application/pdf' && url ? (
-          <iframe src={url} title={doc.name} className="size-full min-h-[70vh] rounded-lg border border-line bg-white" />
-        ) : text !== null ? (
-          <div className="mx-auto max-w-[820px] rounded-lg border border-line bg-surface-1 p-6 shadow-sm">
-            <pre className="whitespace-pre-wrap break-words font-mono text-[12.5px] leading-relaxed text-ink-2">{text}</pre>
-          </div>
-        ) : (
-          <div className="flex h-full items-center justify-center">
-            <div className="text-center">
-              <FileText size={40} className="mx-auto text-ink-3" />
-              <p className="mt-3 text-[12.5px] text-ink-3">Tidak ada pratinjau untuk jenis berkas ini.</p>
-              <p className="mt-1 flex items-center justify-center gap-1 text-[11px] text-ink-4">
-                <Clock size={11} /> {mime || 'berkas'} · {doc.size !== undefined ? formatBytes(doc.size) : '—'}
-              </p>
-              {doc.blobId && (
-                <Button className="mt-4" variant="primary" icon={<Download size={13} />} onClick={() => downloadDoc(doc)}>
-                  Unduh berkas
-                </Button>
-              )}
-            </div>
-          </div>
-        )}
+        <BlobPreview blobId={doc.blobId} mime={doc.mime} name={doc.name} size={doc.size} />
       </div>
     </div>
   )
