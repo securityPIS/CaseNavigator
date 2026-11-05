@@ -520,8 +520,47 @@ export interface Bap {
   answers: BapAnswer[]
   /** Ad-hoc questions the investigator added beyond the template set. */
   extraQuestions?: BapExtraQuestion[]
+  /**
+   * The opening of the BAP (TKO B14-002 Lampiran 6, page 19): when and where
+   * the examination happens and who the terperiksa is. Filled in before any
+   * question is asked.
+   */
+  identity?: BapIdentity
   notes: string
   updatedAt: string
+}
+
+export type BapTimezone = 'WIB' | 'WITA' | 'WIT'
+
+/**
+ * Identity of the terperiksa as recorded at the start of one examination — a
+ * snapshot, so a later change to the person's record never rewrites a BAP.
+ */
+export interface BapIdentity {
+  timezone: BapTimezone
+  /** "saat Kapal … di …" — only for examinations held on board. */
+  vessel?: string
+  vesselLocation?: string
+  /** What the terperiksa is examined about — "sehubungan dengan …". */
+  matter: string
+  fullName: string
+  gender: 'laki-laki' | 'perempuan' | ''
+  occupation: string
+  position: string
+  /** Employer, e.g. the ship owner. */
+  company: string
+  education: string
+  birthPlace: string
+  /** YYYY-MM-DD */
+  birthDate: string
+  religion: string
+  maritalStatus: string
+  nationality: string
+  address: string
+  /** Photo of the KTP, kept in the blobs table. */
+  ktpBlobId?: string
+  /** Set once the form is complete and the examination may begin. */
+  completedAt?: string
 }
 
 /* -------------------------------------------------------- Gelar Perkara */

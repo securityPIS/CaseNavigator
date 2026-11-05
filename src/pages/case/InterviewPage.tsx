@@ -29,8 +29,11 @@ import type {
   IntervieweeKind,
   Question,
   QuestionSet,
+  Sprint,
   User,
 } from '@/domain/types'
+import { closingQuestions, openingQuestions, riwayatHidupDraft, stdContext } from '@/domain/bapStandard'
+import { BapIdentityForm, BapIdentitySummary } from './BapIdentityForm'
 import { cn, formatDateTime, uid } from '@/lib/utils'
 import { Avatar, Badge, Button, Card, EmptyState, IconButton, Input, Progress, Select, Textarea, tone, Tooltip } from '@/components/ui/primitives'
 import { Modal } from '@/components/ui/Modal'
@@ -65,6 +68,9 @@ export function InterviewPage() {
   const roles = useLiveQuery(() => db.roles.toArray(), [], [])
   const sets = useLiveQuery(() => db.questionSets.toArray(), [], [])
   const questions = useLiveQuery(() => db.questions.toArray(), [], [])
+  const caseRec = useLiveQuery(() => db.cases.get(caseId), [caseId])
+  // One case, one SPRINT — the BAP cites it as its authority.
+  const sprint = sprints[0]
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [addingPerson, setAddingPerson] = useState(false)
@@ -165,6 +171,8 @@ export function InterviewPage() {
             questions={questions}
             conduct={conduct}
             sprintUserIds={assignedUserIds(sprints)}
+            sprint={sprint}
+            caseTitle={caseRec?.title ?? ''}
             onNewBap={() => setNewBapFor(selected)}
           />
         )}
@@ -196,6 +204,8 @@ function IntervieweePanel({
   questions,
   conduct,
   sprintUserIds,
+  sprint,
+  caseTitle,
   onNewBap,
 }: {
   person: Interviewee
@@ -205,6 +215,8 @@ function IntervieweePanel({
   questions: Question[]
   conduct: boolean
   sprintUserIds: Set<string>
+  sprint?: Sprint
+  caseTitle: string
   onNewBap: () => void
 }) {
   const [openId, setOpenId] = useState<string | null>(null)
@@ -305,6 +317,8 @@ function IntervieweePanel({
             questions={questions.filter((q) => q.setId === open.questionSetId).sort((a, b) => a.order - b.order)}
             conduct={conduct}
             sprintUserIds={sprintUserIds}
+            sprint={sprint}
+            caseTitle={caseTitle}
           />
         )}
       </div>
@@ -322,6 +336,8 @@ function BapForm({
   questions,
   conduct,
   sprintUserIds,
+  sprint,
+  caseTitle,
 }: {
   bap: Bap
   person: Interviewee
@@ -330,14 +346,28 @@ function BapForm({
   questions: Question[]
   conduct: boolean
   sprintUserIds: Set<string>
+  sprint?: Sprint
+  caseTitle: string
 }) {
   const st = STATUS_META[bap.status]
   const locked = bap.status === 'signed' || !conduct
+  // The terperiksa's identity comes first (TKO Lampiran 6, page 19); the
+  // questions stay closed until it is complete. A signed BAP is shown as it is.
+  const [editingIdentity, setEditingIdentity] = useState(false)
+  const identityDone = !!bap.identity?.completedAt
+  const showIdentityForm = !locked && (!identityDone || editingIdentity)
+  useEffect(() => setEditingIdentity(false), [bap.id])
+
+  // Fourteen mandatory questions from the TKO frame every BAP: ten before the
+  // question set, four after it. Their wording takes the identity's details.
+  const ctx = stdContext(bap.identity, person)
+  const opening = useMemo(() => openingQuestions(ctx), [ctx.matter, ctx.vessel, ctx.company, ctx.position]) // eslint-disable-line react-hooks/exhaustive-deps
+  const closing = useMemo(() => closingQuestions(ctx), [ctx.matter, ctx.vessel, ctx.company, ctx.position]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Ad-hoc questions the investigator added to this BAP are rendered right
   // after the template set, sharing the same answer store keyed by question id.
   const extras = useMemo(() => bap.extraQuestions ?? [], [bap.extraQuestions])
-  const allQuestions = useMemo<Question[]>(
+  const middle = useMemo<Question[]>(
     () => [
       ...questions,
       ...extras.map((eq, i) => ({
@@ -351,6 +381,7 @@ function BapForm({
     ],
     [questions, extras],
   )
+  const allQuestions = useMemo(() => [...opening, ...middle, ...closing], [opening, middle, closing])
 
   const answers = useMemo(() => new Map(bap.answers.map((a) => [a.questionId, a])), [bap.answers])
   const answered = allQuestions.filter((q) => {
@@ -386,6 +417,10 @@ function BapForm({
   }
 
   const setStatus = async (status: BapStatus) => {
+    if (status === 'completed' && !identityDone) {
+      toast.error('Belum lengkap', 'Isi identitas terperiksa terlebih dahulu.')
+      return
+    }
     if (status === 'completed' && requiredLeft > 0) {
       toast.error('Belum lengkap', `${requiredLeft} pertanyaan wajib masih kosong.`)
       return
@@ -432,7 +467,7 @@ function BapForm({
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
-            {!locked && bap.status !== 'completed' && (
+            {!locked && identityDone && bap.status !== 'completed' && (
               <Button size="sm" variant="outline" icon={<CheckCircle2 size={12} />} onClick={() => setStatus('completed')}>
                 Mark complete
               </Button>
@@ -472,29 +507,76 @@ function BapForm({
           })}
         </div>
 
-        {/* Progress */}
-        <div className="mt-4 flex items-center gap-3">
-          <Progress value={allQuestions.length ? (answered / allQuestions.length) * 100 : 0} className="max-w-[220px] flex-1" />
-          <span className="text-[11px] text-ink-3 tnum">
-            {answered}/{allQuestions.length} terjawab
-          </span>
-          {requiredLeft > 0 && (
-            <span className="text-[11px] text-warn tnum">{requiredLeft} wajib belum diisi</span>
+        {/* Steps */}
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <StepChip n={1} label="Identitas terperiksa" done={identityDone} active={showIdentityForm} />
+          <span className="h-px w-4 bg-line-strong" />
+          <StepChip
+            n={2}
+            label="Pemeriksaan"
+            done={identityDone && requiredLeft === 0}
+            active={!showIdentityForm}
+            disabled={!identityDone && !locked}
+          />
+          {!showIdentityForm && (
+            <div className="ml-auto flex items-center gap-3">
+              <Progress value={allQuestions.length ? (answered / allQuestions.length) * 100 : 0} className="w-[140px]" />
+              <span className="text-[11px] text-ink-3 tnum">
+                {answered}/{allQuestions.length} terjawab
+              </span>
+              {requiredLeft > 0 && <span className="text-[11px] text-warn tnum">{requiredLeft} wajib belum diisi</span>}
+            </div>
           )}
         </div>
       </div>
 
-      {/* Questions */}
+      {showIdentityForm ? (
+        <BapIdentityForm
+          key={bap.id}
+          bap={bap}
+          person={person}
+          users={users}
+          sprint={sprint}
+          caseTitle={caseTitle}
+          onDone={() => setEditingIdentity(false)}
+          onCancel={identityDone ? () => setEditingIdentity(false) : undefined}
+        />
+      ) : (
+        <>
+      <BapIdentitySummary bap={bap} editable={!locked} onEdit={() => setEditingIdentity(true)} />
+
+      {/* Questions: mandatory opening, the case questions, mandatory closing */}
+      <QuestionGroup title="Pertanyaan wajib — pembuka" hint="TKO B14-002 Lampiran 6, pertanyaan 1–10" count={opening.length} />
       <div className="divide-y divide-line-soft/70">
-        {allQuestions.length === 0 && (
-          <p className="px-5 py-8 text-center text-[12px] text-ink-4">
-            Belum ada pertanyaan. Tambahkan pertanyaan di bawah, atau kelola question set di Admin → Questions Customization.
-          </p>
-        )}
-        {allQuestions.map((q, i) => (
+        {opening.map((q, i) => (
           <QuestionRow
             key={q.id}
             index={i}
+            question={q}
+            answer={answers.get(q.id)}
+            locked={locked}
+            standard
+            draftHelper={
+              q.id === 'std-06' && bap.identity
+                ? { label: 'Susun dari identitas', build: () => riwayatHidupDraft(bap.identity!) }
+                : undefined
+            }
+            onChange={(patch) => write(q.id, patch)}
+          />
+        ))}
+      </div>
+
+      <QuestionGroup title="Pertanyaan pemeriksaan" hint={set ? `Dari question set “${set.name}” dan pertanyaan tambahan` : 'Pertanyaan tambahan'} count={middle.length} />
+      <div className="divide-y divide-line-soft/70">
+        {middle.length === 0 && (
+          <p className="px-5 py-6 text-center text-[12px] text-ink-4">
+            Belum ada pertanyaan pemeriksaan. Tambahkan di bawah, atau kelola question set di Admin → Questions Customization.
+          </p>
+        )}
+        {middle.map((q, i) => (
+          <QuestionRow
+            key={q.id}
+            index={opening.length + i}
             question={q}
             answer={answers.get(q.id)}
             locked={locked}
@@ -504,6 +586,21 @@ function BapForm({
           />
         ))}
         {!locked && <ExtraQuestionComposer onAdd={addExtraQuestion} />}
+      </div>
+
+      <QuestionGroup title="Pertanyaan wajib — penutup" hint="TKO B14-002 Lampiran 6, pertanyaan 19–22" count={closing.length} />
+      <div className="divide-y divide-line-soft/70">
+        {closing.map((q, i) => (
+          <QuestionRow
+            key={q.id}
+            index={opening.length + middle.length + i}
+            question={q}
+            answer={answers.get(q.id)}
+            locked={locked}
+            standard
+            onChange={(patch) => write(q.id, patch)}
+          />
+        ))}
       </div>
 
       {/* Closing notes */}
@@ -523,7 +620,55 @@ function BapForm({
           </p>
         )}
       </div>
+        </>
+      )}
     </Card>
+  )
+}
+
+function StepChip({
+  n,
+  label,
+  done,
+  active,
+  disabled,
+}: {
+  n: number
+  label: string
+  done: boolean
+  active: boolean
+  disabled?: boolean
+}) {
+  return (
+    <span
+      className={cn(
+        'flex items-center gap-2 rounded-full border py-1 pl-1 pr-3 text-[11.5px]',
+        active ? 'border-brand/50 bg-brand/10 text-ink' : 'border-line-soft text-ink-3',
+        disabled && 'opacity-50',
+      )}
+    >
+      <span
+        className={cn(
+          'flex size-5 items-center justify-center rounded-full text-[10px] font-semibold',
+          done ? 'bg-ok text-white' : active ? 'bg-brand text-white' : 'bg-tint/10 text-ink-3',
+        )}
+      >
+        {done ? <CheckCircle2 size={11} /> : n}
+      </span>
+      {label}
+    </span>
+  )
+}
+
+function QuestionGroup({ title, hint, count }: { title: string; hint: string; count: number }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 border-y border-line-soft bg-abyss/30 px-5 py-2.5">
+      <div>
+        <h4 className="text-[11px] font-semibold uppercase tracking-[0.07em] text-ink-2">{title}</h4>
+        <p className="text-[10.5px] text-ink-4">{hint}</p>
+      </div>
+      <span className="text-[10.5px] text-ink-4 tnum">{count} pertanyaan</span>
+    </div>
   )
 }
 
@@ -538,6 +683,8 @@ function QuestionRow({
   answer,
   locked,
   extra,
+  standard,
+  draftHelper,
   onRemove,
   onChange,
 }: {
@@ -546,6 +693,10 @@ function QuestionRow({
   answer?: BapAnswer
   locked: boolean
   extra?: boolean
+  /** One of the fourteen questions the TKO makes mandatory. */
+  standard?: boolean
+  /** Offers to start the answer from a prepared draft. */
+  draftHelper?: { label: string; build: () => string }
   onRemove?: () => void
   onChange: (patch: Partial<BapAnswer>) => void
 }) {
@@ -599,6 +750,11 @@ function QuestionRow({
                   <Sparkles size={8} /> Tambahan
                 </span>
               )}
+              {standard && (
+                <span className="ml-2 inline-flex items-center gap-1 rounded border border-warn/35 bg-warn/10 px-1.5 py-px align-middle text-[9px] font-medium text-warn">
+                  <Lock size={8} /> Wajib TKO
+                </span>
+              )}
             </p>
             {extra && onRemove && !locked && (
               <IconButton label="Hapus pertanyaan" size={22} onClick={onRemove}>
@@ -607,6 +763,20 @@ function QuestionRow({
             )}
           </div>
           {question.hint && <p className="mt-1 text-[10.5px] italic text-ink-4">{question.hint}</p>}
+          {draftHelper && !locked && !draft.trim() && (
+            <button
+              type="button"
+              onClick={() => {
+                const text = draftHelper.build()
+                setDraft(text)
+                draftRef.current = text
+                onChange({ value: text })
+              }}
+              className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-brand/35 bg-brand/8 px-2.5 py-1 text-[11px] text-brand-bright transition-colors hover:bg-brand/14"
+            >
+              <Sparkles size={11} /> {draftHelper.label}
+            </button>
+          )}
 
           <div className="mt-2.5">
             {question.type === 'textarea' && (
