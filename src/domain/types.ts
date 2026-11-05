@@ -503,6 +503,32 @@ export interface BapAnswer {
   /** True when the value was produced by voice dictation. The investigator can
       still edit it freely; the flag only records how it first came in. */
   dictated?: boolean
+  /** The terperiksa's spoken answer, recorded alongside the written one. */
+  audio?: MediaClip
+}
+
+/** A recorded clip; the payload lives in the blobs table. */
+export interface MediaClip {
+  blobId: string
+  mime: string
+  size: number
+  durationSec: number
+  recordedAt: string
+}
+
+/** What a session recording captured. */
+export type RecordingMode = 'av' | 'video' | 'audio'
+
+/**
+ * A recording of the examination itself. TKO B14-002 (III.13–14) lets the
+ * investigator record the examination; sound and video need the
+ * terperiksa's consent, which is recorded with the clip.
+ */
+export interface BapRecording extends MediaClip {
+  id: string
+  mode: RecordingMode
+  recordedBy: string
+  consent: boolean
 }
 
 /**
@@ -513,7 +539,10 @@ export interface BapAnswer {
 export interface BapExtraQuestion {
   id: string
   label: string
-  type: 'text' | 'textarea'
+  type: QuestionType
+  options?: string[]
+  /** Set when the question was taken from a question-set template. */
+  fromQuestionId?: string
   createdAt: string
 }
 
@@ -533,8 +562,13 @@ export interface Bap {
   startedAt: string
   completedAt?: string
   answers: BapAnswer[]
-  /** Ad-hoc questions the investigator added beyond the template set. */
+  /** Questions the investigator added beyond the template set — written in or
+      taken from another template. */
   extraQuestions?: BapExtraQuestion[]
+  /** Template questions the investigator dropped from this BAP. */
+  removedQuestionIds?: string[]
+  /** Recordings of the examination session. */
+  recordings?: BapRecording[]
   /** The examining investigator — "saya: NAMA INVESTIGATOR". Older BAPs
       have none; their first investigatorId stands in. */
   examinerId?: string

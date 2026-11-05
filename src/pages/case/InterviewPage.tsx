@@ -27,6 +27,7 @@ import type {
   BapStatus,
   Interviewee,
   IntervieweeKind,
+  MediaClip,
   Question,
   QuestionSet,
   Sprint,
@@ -34,6 +35,9 @@ import type {
 } from '@/domain/types'
 import { closingQuestions, openingQuestions, personMissing, riwayatHidupDraft, stdContext } from '@/domain/bapStandard'
 import { BapOpeningModal, BapOpeningSummary, TerperiksaFormModal } from './BapOpening'
+import { ClipPlayer, SessionRecorder, TemplateQuestionPicker, storeClip } from './BapMedia'
+import { formatDuration, useMediaRecorder } from '@/hooks/useMediaRecorder'
+import type { Dictation } from '@/hooks/useDictation'
 import { cn, formatDateTime, uid } from '@/lib/utils'
 import { Badge, Button, Card, EmptyState, IconButton, Input, Progress, Select, Textarea, tone, Tooltip } from '@/components/ui/primitives'
 import { Field } from '@/pages/CasesPage'
@@ -172,6 +176,7 @@ export function InterviewPage() {
             questions={questions}
             conduct={conduct}
             sprint={sprint}
+            recorderName={me?.name ?? 'Unknown user'}
             onNewBap={() => setOpening({ person: selected })}
             onEditOpening={(bap) => setOpening({ person: selected, bap })}
             onEditPerson={() => setPersonForm(selected)}
@@ -222,6 +227,7 @@ function IntervieweePanel({
   questions,
   conduct,
   sprint,
+  recorderName,
   onNewBap,
   onEditOpening,
   onEditPerson,
@@ -233,6 +239,7 @@ function IntervieweePanel({
   questions: Question[]
   conduct: boolean
   sprint?: Sprint
+  recorderName: string
   onNewBap: () => void
   onEditOpening: (bap: Bap) => void
   onEditPerson: () => void
@@ -346,6 +353,9 @@ function IntervieweePanel({
             questions={questions.filter((q) => q.setId === open.questionSetId).sort((a, b) => a.order - b.order)}
             conduct={conduct}
             sprint={sprint}
+            allSets={sets}
+            allQuestionsBank={questions}
+            recorderName={recorderName}
             onEditOpening={() => onEditOpening(open)}
           />
         )}
@@ -364,6 +374,9 @@ function BapForm({
   questions,
   conduct,
   sprint,
+  allSets,
+  allQuestionsBank,
+  recorderName,
   onEditOpening,
 }: {
   bap: Bap
@@ -373,6 +386,11 @@ function BapForm({
   questions: Question[]
   conduct: boolean
   sprint?: Sprint
+  /** Every question-set template, for adding questions from other sets. */
+  allSets: QuestionSet[]
+  allQuestionsBank: Question[]
+  /** Who is recording — stamped on session recordings. */
+  recorderName: string
   onEditOpening: () => void
 }) {
   const st = STATUS_META[bap.status]
@@ -390,19 +408,24 @@ function BapForm({
   // Ad-hoc questions the investigator added to this BAP are rendered right
   // after the template set, sharing the same answer store keyed by question id.
   const extras = useMemo(() => bap.extraQuestions ?? [], [bap.extraQuestions])
+  const removed = useMemo(() => new Set(bap.removedQuestionIds ?? []), [bap.removedQuestionIds])
+  // The case questions are not a fixed list: the template's, minus any the
+  // investigator dropped, plus any they added — written in or taken from a
+  // template. Only the TKO's mandatory questions are fixed.
   const middle = useMemo<Question[]>(
     () => [
-      ...questions,
+      ...questions.filter((q) => !removed.has(q.id)),
       ...extras.map((eq, i) => ({
         id: eq.id,
         setId: '__extra__',
         order: 10_000 + i,
         label: eq.label,
         type: eq.type,
+        options: eq.options,
         required: false,
       })),
     ],
-    [questions, extras],
+    [questions, extras, removed],
   )
   const allQuestions = useMemo(() => [...opening, ...middle, ...closing], [opening, middle, closing])
 
@@ -416,19 +439,54 @@ function BapForm({
     return q.required && !(a && (a.value.trim() !== '' || (a.values?.length ?? 0) > 0))
   }).length
 
-  const write = async (questionId: string, patch: Partial<BapAnswer>) => {
-    const next = [...bap.answers]
-    const i = next.findIndex((a) => a.questionId === questionId)
-    if (i === -1) next.push({ questionId, value: '', ...patch })
-    else next[i] = { ...next[i], ...patch }
-    await db.baps.update(bap.id, { answers: next, updatedAt: new Date().toISOString() })
-  }
+  // Merged into the stored record, not this render's copy: a transcript
+  // phrase and the recorded clip can land on one answer moments apart, and
+  // a stale copy would let the second write undo the first.
+  const write = (questionId: string, patch: Partial<BapAnswer>) =>
+    db.transaction('rw', db.baps, async () => {
+      const cur = await db.baps.get(bap.id)
+      if (!cur) return
+      const next = [...cur.answers]
+      const i = next.findIndex((a) => a.questionId === questionId)
+      if (i === -1) next.push({ questionId, value: '', ...patch })
+      else next[i] = { ...next[i], ...patch }
+      await db.baps.update(bap.id, { answers: next, updatedAt: new Date().toISOString() })
+    })
 
   const addExtraQuestion = async (label: string, type: 'text' | 'textarea') => {
     const text = label.trim()
     if (!text) return
     const eq: BapExtraQuestion = { id: uid('eq'), label: text, type, createdAt: new Date().toISOString() }
     await db.baps.update(bap.id, { extraQuestions: [...extras, eq], updatedAt: new Date().toISOString() })
+  }
+
+  const [pickingTemplate, setPickingTemplate] = useState(false)
+  // Template questions already on this BAP — in its own set, or brought in.
+  const present = useMemo(
+    () => new Set([...questions.filter((q) => !removed.has(q.id)).map((q) => q.id), ...extras.map((e) => e.fromQuestionId).filter((x): x is string => !!x)]),
+    [questions, extras, removed],
+  )
+
+  const addFromTemplate = async (q: Question) => {
+    if (q.setId === bap.questionSetId && removed.has(q.id)) {
+      // Dropped from this BAP's own set — put it back where it was.
+      await db.baps.update(bap.id, { removedQuestionIds: [...removed].filter((x) => x !== q.id), updatedAt: new Date().toISOString() })
+    } else {
+      const eq: BapExtraQuestion = {
+        id: uid('eq'),
+        label: q.label,
+        type: q.type,
+        options: q.options,
+        fromQuestionId: q.id,
+        createdAt: new Date().toISOString(),
+      }
+      await db.baps.update(bap.id, { extraQuestions: [...extras, eq], updatedAt: new Date().toISOString() })
+    }
+    toast.success('Pertanyaan ditambahkan', q.label.length > 60 ? `${q.label.slice(0, 60)}…` : q.label)
+  }
+
+  const removeTemplateQuestion = async (id: string) => {
+    await db.baps.update(bap.id, { removedQuestionIds: [...removed, id], updatedAt: new Date().toISOString() })
   }
 
   const removeExtraQuestion = async (id: string) => {
@@ -520,6 +578,8 @@ function BapForm({
 
       <BapOpeningSummary bap={bap} users={users} sprint={sprint} editable={!locked} onEdit={onEditOpening} />
 
+      <SessionRecorder bap={bap} locked={locked} recordedBy={recorderName} />
+
       {/* Questions: mandatory opening, the case questions, mandatory closing */}
       <QuestionGroup title="Pertanyaan wajib — pembuka" hint="TKO B14-002 Lampiran 6, pertanyaan 1–10" count={opening.length} />
       <div className="divide-y divide-line-soft/70">
@@ -541,7 +601,11 @@ function BapForm({
         ))}
       </div>
 
-      <QuestionGroup title="Pertanyaan pemeriksaan" hint={set ? `Dari question set “${set.name}” dan pertanyaan tambahan` : 'Pertanyaan tambahan'} count={middle.length} />
+      <QuestionGroup
+        title="Pertanyaan pemeriksaan"
+        hint={`${set ? `Dari template “${set.name}”` : 'Tanpa template'} — bisa dikurangi, ditambah dari template lain, atau ditulis sendiri`}
+        count={middle.length}
+      />
       <div className="divide-y divide-line-soft/70">
         {middle.length === 0 && (
           <p className="px-5 py-6 text-center text-[12px] text-ink-4">
@@ -556,12 +620,21 @@ function BapForm({
             answer={answers.get(q.id)}
             locked={locked}
             extra={q.setId === '__extra__'}
-            onRemove={q.setId === '__extra__' ? () => removeExtraQuestion(q.id) : undefined}
+            onRemove={q.setId === '__extra__' ? () => removeExtraQuestion(q.id) : () => removeTemplateQuestion(q.id)}
             onChange={(patch) => write(q.id, patch)}
           />
         ))}
-        {!locked && <ExtraQuestionComposer onAdd={addExtraQuestion} />}
+        {!locked && <ExtraQuestionComposer onAdd={addExtraQuestion} onPickTemplate={() => setPickingTemplate(true)} />}
       </div>
+      {pickingTemplate && (
+        <TemplateQuestionPicker
+          sets={allSets.filter((x) => x.active || x.id === bap.questionSetId)}
+          questions={allQuestionsBank}
+          present={present}
+          onPick={addFromTemplate}
+          onClose={() => setPickingTemplate(false)}
+        />
+      )}
 
       <QuestionGroup title="Pertanyaan wajib — penutup" hint="TKO B14-002 Lampiran 6, pertanyaan 19–22" count={closing.length} />
       <div className="divide-y divide-line-soft/70">
@@ -695,10 +768,12 @@ function QuestionRow({
                 </span>
               )}
             </p>
-            {extra && onRemove && !locked && (
-              <IconButton label="Hapus pertanyaan" size={22} onClick={onRemove}>
-                <Trash2 size={12} />
-              </IconButton>
+            {!standard && onRemove && !locked && (
+              <Tooltip label={extra ? 'Hapus pertanyaan' : 'Hapus dari BAP ini — template tidak berubah'}>
+                <IconButton label="Hapus pertanyaan" size={22} className="hover:text-danger" onClick={onRemove}>
+                  <Trash2 size={12} />
+                </IconButton>
+              </Tooltip>
             )}
           </div>
           {question.hint && <p className="mt-1 text-[10.5px] italic text-ink-4">{question.hint}</p>}
@@ -790,38 +865,23 @@ function QuestionRow({
             )}
           </div>
 
-          {/* Voice — record the terperiksa and transcribe straight into the answer */}
-          {canDictate && !locked && (
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              {dictation.supported ? (
-                <button
-                  type="button"
-                  onClick={dictation.toggle}
-                  className={cn(
-                    'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-colors',
-                    dictation.listening
-                      ? 'border-danger/50 bg-danger/12 text-danger'
-                      : 'border-line-strong text-ink-3 hover:border-brand/60 hover:text-brand-bright',
-                  )}
-                >
-                  {dictation.listening ? <Square size={10} className="fill-current" /> : <Mic size={12} />}
-                  {dictation.listening ? 'Berhenti merekam' : 'Rekam suara'}
-                </button>
-              ) : (
-                <span className="text-[10.5px] text-ink-4">Transkrip suara tidak didukung di browser ini.</span>
-              )}
-              {dictation.listening && (
-                <span className="flex items-center gap-1.5 text-[10.5px] text-danger">
-                  <span className="size-1.5 rounded-full bg-danger animate-pulse" /> Mendengarkan…
-                </span>
-              )}
-              {dictation.error === 'not-allowed' && (
-                <span className="text-[10.5px] text-warn">Izin mikrofon ditolak.</span>
-              )}
-              {dictation.error === 'no-speech' && !dictation.listening && (
-                <span className="text-[10.5px] text-ink-4">Tidak ada suara terdeteksi.</span>
-              )}
-            </div>
+          {/* Voice — the spoken answer is kept as audio and, where the browser
+              can, transcribed into the written answer as it is spoken. */}
+          {canDictate && (
+            <AnswerAudio
+              clip={answer?.audio}
+              locked={locked}
+              dictation={dictation}
+              onSaved={async (clip) => {
+                if (answer?.audio) await db.blobs.delete(answer.audio.blobId)
+                onChange({ audio: clip })
+              }}
+              onRemove={async () => {
+                if (!answer?.audio) return
+                await db.blobs.delete(answer.audio.blobId)
+                onChange({ audio: undefined })
+              }}
+            />
           )}
           {canDictate && dictation.listening && dictation.interim && (
             <p className="mt-1.5 rounded-md border border-dashed border-brand/40 bg-brand/6 px-2.5 py-1.5 text-[11.5px] italic text-ink-3">
@@ -830,7 +890,7 @@ function QuestionRow({
           )}
           {canDictate && !dictation.listening && answer?.dictated && value.trim() !== '' && (
             <p className="mt-1 flex items-center gap-1 text-[10px] text-ink-4">
-              <Mic size={9} /> Hasil transkrip suara — dapat diedit
+              <Mic size={9} /> Teks dari transkrip rekaman — dapat diedit
             </p>
           )}
 
@@ -867,7 +927,13 @@ function QuestionRow({
  * until the investigator needs it so the BAP reads as the standard examination
  * until they deliberately go off-script.
  */
-function ExtraQuestionComposer({ onAdd }: { onAdd: (label: string, type: 'text' | 'textarea') => void }) {
+function ExtraQuestionComposer({
+  onAdd,
+  onPickTemplate,
+}: {
+  onAdd: (label: string, type: 'text' | 'textarea') => void
+  onPickTemplate: () => void
+}) {
   const [open, setOpen] = useState(false)
   const [label, setLabel] = useState('')
   const [type, setType] = useState<'text' | 'textarea'>('textarea')
@@ -882,12 +948,18 @@ function ExtraQuestionComposer({ onAdd }: { onAdd: (label: string, type: 'text' 
 
   if (!open) {
     return (
-      <div className="p-5">
+      <div className="flex flex-wrap gap-2 p-5">
+        <button
+          onClick={onPickTemplate}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-line-strong px-3 py-2 text-[12px] text-ink-3 transition-colors hover:border-brand/60 hover:text-brand-bright"
+        >
+          <ClipboardList size={13} /> Tambah dari template
+        </button>
         <button
           onClick={() => setOpen(true)}
           className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-line-strong px-3 py-2 text-[12px] text-ink-3 transition-colors hover:border-brand/60 hover:text-brand-bright"
         >
-          <Plus size={13} /> Tambah pertanyaan di luar template
+          <Plus size={13} /> Tulis pertanyaan sendiri
         </button>
       </div>
     )
@@ -939,3 +1011,95 @@ function ExtraQuestionComposer({ onAdd }: { onAdd: (label: string, type: 'text' 
 }
 
 /* ------------------------------------------------------------- Modals */
+
+/**
+ * The answer as the terperiksa spoke it. Recording keeps an audio clip of the
+ * answer and, where the browser can, transcribes it into the written answer
+ * at the same time; the text stays editable either way.
+ */
+function AnswerAudio({
+  clip,
+  locked,
+  dictation,
+  onSaved,
+  onRemove,
+}: {
+  clip?: MediaClip
+  locked: boolean
+  dictation: Dictation
+  onSaved: (clip: MediaClip) => Promise<void>
+  onRemove: () => Promise<void>
+}) {
+  const media = useMediaRecorder()
+  const [saving, setSaving] = useState(false)
+
+  const start = async () => {
+    const ok = await media.start({ audio: true, video: false })
+    if (!ok) {
+      toast.error('Tidak dapat merekam', media.error === 'not-allowed' ? 'Izin mikrofon ditolak browser.' : 'Mikrofon tidak dapat dibuka.')
+      return
+    }
+    if (dictation.supported) dictation.start()
+  }
+
+  const stop = async () => {
+    if (dictation.listening) dictation.stop()
+    setSaving(true)
+    try {
+      const res = await media.stop()
+      if (res) await onSaved(await storeClip(res.blob, res.mime, res.durationSec))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="mt-2 space-y-2">
+      {!locked && (
+        <div className="flex flex-wrap items-center gap-2">
+          {!media.supported ? (
+            <span className="text-[10.5px] text-ink-4">Perekaman suara tidak didukung di browser ini.</span>
+          ) : media.recording ? (
+            <>
+              <button
+                type="button"
+                onClick={stop}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-danger/50 bg-danger/12 px-2.5 py-1 text-[11px] font-medium text-danger"
+              >
+                <Square size={10} className="fill-current" /> Berhenti · {formatDuration(media.elapsed)}
+              </button>
+              <span className="flex items-center gap-1.5 text-[10.5px] text-danger">
+                <span className="size-1.5 animate-pulse rounded-full bg-danger" />
+                Merekam jawaban{dictation.supported ? ' & menulis transkrip…' : '…'}
+              </span>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={start}
+              disabled={saving}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-2.5 py-1 text-[11px] font-medium text-ink-3 transition-colors hover:border-brand/60 hover:text-brand-bright disabled:opacity-50"
+            >
+              <Mic size={12} /> {clip ? 'Rekam ulang audio' : 'Rekam audio'}
+            </button>
+          )}
+          {!media.recording && !dictation.supported && media.supported && (
+            <span className="text-[10.5px] text-ink-4">Audio disimpan; tulis jawabannya di atas.</span>
+          )}
+        </div>
+      )}
+      {clip && !media.recording && (
+        <div className="flex items-center gap-2 rounded-lg border border-line-soft bg-abyss/30 py-1 pl-2 pr-1">
+          <Mic size={12} className="shrink-0 text-ink-4" />
+          <ClipPlayer clip={clip} className="h-8" />
+          <span className="shrink-0 text-[10px] text-ink-4 tnum">{formatDuration(clip.durationSec)}</span>
+          {!locked && (
+            <IconButton label="Hapus audio" size={24} className="shrink-0 hover:text-danger" onClick={onRemove}>
+              <Trash2 size={11} />
+            </IconButton>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
