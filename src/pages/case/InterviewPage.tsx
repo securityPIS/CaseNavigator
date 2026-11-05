@@ -32,11 +32,10 @@ import type {
   Sprint,
   User,
 } from '@/domain/types'
-import { closingQuestions, openingQuestions, riwayatHidupDraft, stdContext } from '@/domain/bapStandard'
-import { BapIdentityForm, BapIdentitySummary } from './BapIdentityForm'
+import { closingQuestions, openingQuestions, personMissing, riwayatHidupDraft, stdContext } from '@/domain/bapStandard'
+import { BapOpeningModal, BapOpeningSummary, TerperiksaFormModal } from './BapOpening'
 import { cn, formatDateTime, uid } from '@/lib/utils'
-import { Avatar, Badge, Button, Card, EmptyState, IconButton, Input, Progress, Select, Textarea, tone, Tooltip } from '@/components/ui/primitives'
-import { Modal } from '@/components/ui/Modal'
+import { Badge, Button, Card, EmptyState, IconButton, Input, Progress, Select, Textarea, tone, Tooltip } from '@/components/ui/primitives'
 import { Field } from '@/pages/CasesPage'
 import { PageSpinner } from '@/components/ui/PageSpinner'
 import { useDictation } from '@/hooks/useDictation'
@@ -73,8 +72,10 @@ export function InterviewPage() {
   const sprint = sprints[0]
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [addingPerson, setAddingPerson] = useState(false)
-  const [newBapFor, setNewBapFor] = useState<Interviewee | null>(null)
+  /** The terperiksa form: 'new' when adding, a person when correcting one. */
+  const [personForm, setPersonForm] = useState<Interviewee | 'new' | null>(null)
+  /** The BAP opening form: a new BAP for a person, or an existing BAP. */
+  const [opening, setOpening] = useState<{ person: Interviewee; bap?: Bap } | null>(null)
 
   const me = users.find((u) => u.id === userId)
   const myRole = roles.find((r) => r.id === me?.role)
@@ -98,7 +99,7 @@ export function InterviewPage() {
           </div>
           {conduct && (
             <Tooltip label="Add terperiksa">
-              <IconButton label="Add terperiksa" size={28} onClick={() => setAddingPerson(true)}>
+              <IconButton label="Add terperiksa" size={28} onClick={() => setPersonForm('new')}>
                 <Plus size={14} />
               </IconButton>
             </Tooltip>
@@ -156,7 +157,7 @@ export function InterviewPage() {
             description="A BAP is an examination of a named person. Add the terperiksa first, then open a BAP against the question set that fits."
             action={
               conduct ? (
-                <Button variant="primary" icon={<Plus size={14} />} onClick={() => setAddingPerson(true)}>
+                <Button variant="primary" icon={<Plus size={14} />} onClick={() => setPersonForm('new')}>
                   Add terperiksa
                 </Button>
               ) : undefined
@@ -170,24 +171,41 @@ export function InterviewPage() {
             sets={sets}
             questions={questions}
             conduct={conduct}
-            sprintUserIds={assignedUserIds(sprints)}
             sprint={sprint}
-            caseTitle={caseRec?.title ?? ''}
-            onNewBap={() => setNewBapFor(selected)}
+            onNewBap={() => setOpening({ person: selected })}
+            onEditOpening={(bap) => setOpening({ person: selected, bap })}
+            onEditPerson={() => setPersonForm(selected)}
           />
         )}
       </div>
 
-      {addingPerson && <AddIntervieweeModal caseId={caseId} onClose={() => setAddingPerson(false)} onCreated={setSelectedId} />}
-      {newBapFor && (
-        <NewBapModal
+      {personForm && (
+        <TerperiksaFormModal
           caseId={caseId}
-          person={newBapFor}
-          sets={sets.filter((s) => s.active)}
+          person={personForm === 'new' ? undefined : personForm}
+          onClose={() => setPersonForm(null)}
+          onSaved={(id) => {
+            setSelectedId(id)
+            // Keep an open BAP form looking at the corrected record.
+            setOpening((o) => (o && o.person.id === id ? { ...o, person: { ...o.person } } : o))
+          }}
+        />
+      )}
+      {opening && (
+        <BapOpeningModal
+          key={opening.bap?.id ?? `new-${opening.person.id}`}
+          caseId={caseId}
+          person={interviewees.find((p) => p.id === opening.person.id) ?? opening.person}
+          bap={opening.bap}
           users={users}
+          sets={sets.filter((s) => s.active)}
           sprintUserIds={assignedUserIds(sprints)}
+          sprint={sprint}
+          reportSources={caseRec?.reportSources ?? []}
+          caseTitle={caseRec?.title ?? ''}
           existing={baps.length}
-          onClose={() => setNewBapFor(null)}
+          onEditPerson={() => setPersonForm(interviewees.find((p) => p.id === opening.person.id) ?? opening.person)}
+          onClose={() => setOpening(null)}
         />
       )}
     </div>
@@ -203,10 +221,10 @@ function IntervieweePanel({
   sets,
   questions,
   conduct,
-  sprintUserIds,
   sprint,
-  caseTitle,
   onNewBap,
+  onEditOpening,
+  onEditPerson,
 }: {
   person: Interviewee
   baps: Bap[]
@@ -214,11 +232,12 @@ function IntervieweePanel({
   sets: QuestionSet[]
   questions: Question[]
   conduct: boolean
-  sprintUserIds: Set<string>
   sprint?: Sprint
-  caseTitle: string
   onNewBap: () => void
+  onEditOpening: (bap: Bap) => void
+  onEditPerson: () => void
 }) {
+  const gaps = personMissing(person)
   const [openId, setOpenId] = useState<string | null>(null)
   const meta = KIND_META[person.kind]
   const sorted = [...baps].sort((a, b) => b.startedAt.localeCompare(a.startedAt))
@@ -263,11 +282,21 @@ function IntervieweePanel({
             </div>
 
             {conduct && (
-              <Button variant="primary" size="sm" icon={<Plus size={12} />} onClick={onNewBap}>
-                New BAP
-              </Button>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button variant="outline" size="sm" icon={<UserRound size={12} />} onClick={onEditPerson}>
+                  Ubah data
+                </Button>
+                <Button variant="primary" size="sm" icon={<Plus size={12} />} onClick={onNewBap}>
+                  New BAP
+                </Button>
+              </div>
             )}
           </div>
+          {gaps.length > 0 && (
+            <p className="mt-4 rounded-lg border border-warn/35 bg-warn/8 px-3 py-2 text-[11.5px] leading-relaxed text-ink-3">
+              Data terperiksa belum lengkap ({gaps.join(', ')}). Lengkapi lewat “Ubah data” sebelum membuka BAP.
+            </p>
+          )}
         </Card>
 
         {/* BAP selector */}
@@ -316,9 +345,8 @@ function IntervieweePanel({
             set={sets.find((s) => s.id === open.questionSetId)}
             questions={questions.filter((q) => q.setId === open.questionSetId).sort((a, b) => a.order - b.order)}
             conduct={conduct}
-            sprintUserIds={sprintUserIds}
             sprint={sprint}
-            caseTitle={caseTitle}
+            onEditOpening={() => onEditOpening(open)}
           />
         )}
       </div>
@@ -335,9 +363,8 @@ function BapForm({
   set,
   questions,
   conduct,
-  sprintUserIds,
   sprint,
-  caseTitle,
+  onEditOpening,
 }: {
   bap: Bap
   person: Interviewee
@@ -345,18 +372,14 @@ function BapForm({
   set?: QuestionSet
   questions: Question[]
   conduct: boolean
-  sprintUserIds: Set<string>
   sprint?: Sprint
-  caseTitle: string
+  onEditOpening: () => void
 }) {
   const st = STATUS_META[bap.status]
   const locked = bap.status === 'signed' || !conduct
-  // The terperiksa's identity comes first (TKO Lampiran 6, page 19); the
-  // questions stay closed until it is complete. A signed BAP is shown as it is.
-  const [editingIdentity, setEditingIdentity] = useState(false)
-  const identityDone = !!bap.identity?.completedAt
-  const showIdentityForm = !locked && (!identityDone || editingIdentity)
-  useEffect(() => setEditingIdentity(false), [bap.id])
+  // The opening (TKO Lampiran 6, page 19) is set when the BAP is opened;
+  // older BAPs without one must have it completed before they can close.
+  const identityDone = !!bap.identity
 
   // Fourteen mandatory questions from the TKO frame every BAP: ten before the
   // question set, four after it. Their wording takes the identity's details.
@@ -418,7 +441,7 @@ function BapForm({
 
   const setStatus = async (status: BapStatus) => {
     if (status === 'completed' && !identityDone) {
-      toast.error('Belum lengkap', 'Isi identitas terperiksa terlebih dahulu.')
+      toast.error('Belum lengkap', 'Lengkapi pembukaan BAP terlebih dahulu.')
       return
     }
     if (status === 'completed' && requiredLeft > 0) {
@@ -485,65 +508,17 @@ function BapForm({
           </div>
         </div>
 
-        {/* Investigators conducting it */}
-        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line-soft pt-3.5">
-          <span className="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-ink-3">Pemeriksa</span>
-          {bap.investigatorIds.map((id) => {
-            const u = users.find((x) => x.id === id)
-            const onSprint = sprintUserIds.has(id)
-            return (
-              <Tooltip key={id} label={onSprint ? `${u?.name} — named on an active SPRINT` : `${u?.name} — no longer on an active SPRINT`}>
-                <span
-                  className={cn(
-                    'flex items-center gap-2 rounded-full border py-1 pl-1 pr-2.5',
-                    onSprint ? 'border-line bg-abyss/40' : 'border-warn/40 bg-warn/8',
-                  )}
-                >
-                  <Avatar src={u?.avatar} name={u?.name ?? id} size={18} />
-                  <span className="text-[11px] text-ink-2">{u?.name ?? 'Unknown'}</span>
-                </span>
-              </Tooltip>
-            )
-          })}
-        </div>
-
-        {/* Steps */}
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <StepChip n={1} label="Identitas terperiksa" done={identityDone} active={showIdentityForm} />
-          <span className="h-px w-4 bg-line-strong" />
-          <StepChip
-            n={2}
-            label="Pemeriksaan"
-            done={identityDone && requiredLeft === 0}
-            active={!showIdentityForm}
-            disabled={!identityDone && !locked}
-          />
-          {!showIdentityForm && (
-            <div className="ml-auto flex items-center gap-3">
-              <Progress value={allQuestions.length ? (answered / allQuestions.length) * 100 : 0} className="w-[140px]" />
-              <span className="text-[11px] text-ink-3 tnum">
-                {answered}/{allQuestions.length} terjawab
-              </span>
-              {requiredLeft > 0 && <span className="text-[11px] text-warn tnum">{requiredLeft} wajib belum diisi</span>}
-            </div>
-          )}
+        {/* Progress */}
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <Progress value={allQuestions.length ? (answered / allQuestions.length) * 100 : 0} className="w-[180px]" />
+          <span className="text-[11px] text-ink-3 tnum">
+            {answered}/{allQuestions.length} terjawab
+          </span>
+          {requiredLeft > 0 && <span className="text-[11px] text-warn tnum">{requiredLeft} wajib belum diisi</span>}
         </div>
       </div>
 
-      {showIdentityForm ? (
-        <BapIdentityForm
-          key={bap.id}
-          bap={bap}
-          person={person}
-          users={users}
-          sprint={sprint}
-          caseTitle={caseTitle}
-          onDone={() => setEditingIdentity(false)}
-          onCancel={identityDone ? () => setEditingIdentity(false) : undefined}
-        />
-      ) : (
-        <>
-      <BapIdentitySummary bap={bap} editable={!locked} onEdit={() => setEditingIdentity(true)} />
+      <BapOpeningSummary bap={bap} users={users} sprint={sprint} editable={!locked} onEdit={onEditOpening} />
 
       {/* Questions: mandatory opening, the case questions, mandatory closing */}
       <QuestionGroup title="Pertanyaan wajib — pembuka" hint="TKO B14-002 Lampiran 6, pertanyaan 1–10" count={opening.length} />
@@ -620,43 +595,7 @@ function BapForm({
           </p>
         )}
       </div>
-        </>
-      )}
     </Card>
-  )
-}
-
-function StepChip({
-  n,
-  label,
-  done,
-  active,
-  disabled,
-}: {
-  n: number
-  label: string
-  done: boolean
-  active: boolean
-  disabled?: boolean
-}) {
-  return (
-    <span
-      className={cn(
-        'flex items-center gap-2 rounded-full border py-1 pl-1 pr-3 text-[11.5px]',
-        active ? 'border-brand/50 bg-brand/10 text-ink' : 'border-line-soft text-ink-3',
-        disabled && 'opacity-50',
-      )}
-    >
-      <span
-        className={cn(
-          'flex size-5 items-center justify-center rounded-full text-[10px] font-semibold',
-          done ? 'bg-ok text-white' : active ? 'bg-brand text-white' : 'bg-tint/10 text-ink-3',
-        )}
-      >
-        {done ? <CheckCircle2 size={11} /> : n}
-      </span>
-      {label}
-    </span>
   )
 }
 
@@ -1000,243 +939,3 @@ function ExtraQuestionComposer({ onAdd }: { onAdd: (label: string, type: 'text' 
 }
 
 /* ------------------------------------------------------------- Modals */
-
-function AddIntervieweeModal({
-  caseId,
-  onClose,
-  onCreated,
-}: {
-  caseId: string
-  onClose: () => void
-  onCreated: (id: string) => void
-}) {
-  const nodes = useLiveQuery(() => db.nodes.where('caseId').equals(caseId).toArray(), [caseId], [])
-  const people = nodes.filter((n) => n.kind === 'person' || n.kind === 'witness')
-
-  const [name, setName] = useState('')
-  const [kind, setKind] = useState<IntervieweeKind>('saksi')
-  const [position, setPosition] = useState('')
-  const [identityNo, setIdentityNo] = useState('')
-  const [phone, setPhone] = useState('')
-  const [address, setAddress] = useState('')
-  const [nodeId, setNodeId] = useState('')
-
-  const create = async () => {
-    if (!name.trim()) return
-    const id = uid('iv')
-    await db.interviewees.add({
-      id,
-      caseId,
-      name: name.trim(),
-      kind,
-      position: position.trim() || '—',
-      identityNo: identityNo.trim() || undefined,
-      phone: phone.trim() || undefined,
-      address: address.trim() || undefined,
-      nodeId: nodeId || undefined,
-      createdAt: new Date().toISOString(),
-    })
-    toast.success('Terperiksa ditambahkan', `${name.trim()} is ready for a BAP.`)
-    onCreated(id)
-    onClose()
-  }
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title="Add terperiksa"
-      description="The person to be examined. Link them to their graph entity where one already exists."
-      size="md"
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="primary" onClick={create} disabled={!name.trim()}>
-            Add terperiksa
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Nama" required>
-            <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Nama lengkap" />
-          </Field>
-          <Field label="Status">
-            <Select
-              value={kind}
-              onChange={(e) => setKind(e.target.value as IntervieweeKind)}
-              options={(Object.keys(KIND_META) as IntervieweeKind[]).map((k) => ({ value: k, label: KIND_META[k].label }))}
-            />
-          </Field>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Jabatan / posisi">
-            <Input value={position} onChange={(e) => setPosition(e.target.value)} placeholder="e.g. Procurement Analyst" />
-          </Field>
-          <Field label="Nomor identitas">
-            <Input value={identityNo} onChange={(e) => setIdentityNo(e.target.value)} placeholder="e.g. EMP-40887" />
-          </Field>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Telepon">
-            <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+62…" />
-          </Field>
-          <Field label="Alamat">
-            <Input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Alamat / lokasi kerja" />
-          </Field>
-        </div>
-
-        <Field label="Entitas pada graph" hint="Links this person to the case graph so the BAP and the node stay one record.">
-          <Select
-            value={nodeId}
-            onChange={(e) => setNodeId(e.target.value)}
-            options={[
-              { value: '', label: '— Tidak ditautkan —' },
-              ...people.map((n) => ({ value: n.id, label: `${n.label} · ${n.sublabel}` })),
-            ]}
-          />
-        </Field>
-      </div>
-    </Modal>
-  )
-}
-
-function NewBapModal({
-  caseId,
-  person,
-  sets,
-  users,
-  sprintUserIds,
-  existing,
-  onClose,
-}: {
-  caseId: string
-  person: Interviewee
-  sets: QuestionSet[]
-  users: User[]
-  sprintUserIds: Set<string>
-  existing: number
-  onClose: () => void
-}) {
-  const userId = useSession((s) => s.userId)
-  // Only investigators the case SPRINT authorises may take a BAP.
-  const eligible = users.filter((u) => sprintUserIds.has(u.id))
-
-  const [number, setNumber] = useState(`BAP-${String(existing + 1).padStart(2, '0')}/${new Date().getFullYear()}`)
-  const [setId, setSetId] = useState(sets.find((s) => s.appliesTo === 'Interviews')?.id ?? sets[0]?.id ?? '')
-  const [location, setLocation] = useState('')
-  const [startedAt, setStartedAt] = useState(() => {
-    const d = new Date()
-    d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
-    return d.toISOString().slice(0, 16)
-  })
-  const [investigatorIds, setInvestigatorIds] = useState<string[]>(sprintUserIds.has(userId) ? [userId] : [])
-
-  const create = async () => {
-    if (!number.trim() || !setId) return
-    await db.baps.add({
-      id: uid('bap'),
-      caseId,
-      intervieweeId: person.id,
-      number: number.trim(),
-      questionSetId: setId,
-      investigatorIds,
-      status: 'in_progress',
-      location: location.trim() || 'Belum ditentukan',
-      startedAt: new Date(startedAt).toISOString(),
-      answers: [],
-      notes: '',
-      updatedAt: new Date().toISOString(),
-    })
-    toast.success('BAP dibuka', `${number.trim()} — ${person.name}.`)
-    onClose()
-  }
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title={`New BAP — ${person.name}`}
-      description="Pick the question set the examination follows. The questions come from Questions Customization, so the process stays the same whoever runs it."
-      size="md"
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="primary" onClick={create} disabled={!number.trim() || !setId}>
-            Open BAP
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Nomor BAP" required>
-            <Input autoFocus value={number} onChange={(e) => setNumber(e.target.value)} />
-          </Field>
-          <Field label="Waktu pemeriksaan">
-            <Input type="datetime-local" value={startedAt} onChange={(e) => setStartedAt(e.target.value)} />
-          </Field>
-        </div>
-
-        <Field label="Question set" required hint="Only active sets appear. Manage them in Admin → Questions Customization.">
-          <Select
-            value={setId}
-            onChange={(e) => setSetId(e.target.value)}
-            options={sets.map((s) => ({ value: s.id, label: `${s.name} · ${s.appliesTo}` }))}
-          />
-        </Field>
-
-        <Field label="Tempat">
-          <Input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Ruang pemeriksaan / lokasi" />
-        </Field>
-
-        <Field label="Pemeriksa" hint="Only investigators named on an active SPRINT for this case can be listed.">
-          {eligible.length === 0 ? (
-            <p className="rounded-lg border border-warn/40 bg-warn/8 px-3 py-2.5 text-[11.5px] leading-relaxed text-ink-2">
-              No active SPRINT names an investigator on this case. Issue one under Case Registration first.
-            </p>
-          ) : (
-            <div className="space-y-1 rounded-lg border border-line bg-abyss/35 p-2">
-              {eligible.map((u) => {
-                const on = investigatorIds.includes(u.id)
-                return (
-                  <button
-                    key={u.id}
-                    onClick={() =>
-                      setInvestigatorIds(on ? investigatorIds.filter((x) => x !== u.id) : [...investigatorIds, u.id])
-                    }
-                    className={cn(
-                      'flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors',
-                      on ? 'bg-brand/10' : 'hover:bg-tint/6',
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        'flex size-4 shrink-0 items-center justify-center rounded border',
-                        on ? 'border-brand bg-brand text-white' : 'border-line-strong',
-                      )}
-                    >
-                      {on && <CheckCircle2 size={9} />}
-                    </span>
-                    <Avatar src={u.avatar} name={u.name} size={22} />
-                    <span className="min-w-0">
-                      <span className="block truncate text-[12px] text-ink">{u.name}</span>
-                      <span className="block truncate text-[10px] text-ink-4">{u.title}</span>
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-          )}
-        </Field>
-      </div>
-    </Modal>
-  )
-}

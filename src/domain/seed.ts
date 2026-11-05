@@ -2,6 +2,7 @@ import { db } from './db'
 import { avatarDataUri } from './avatar'
 import { DEFAULT_ROLES } from './roles'
 import { defaultSprintTemplate, letterFromSprint } from './sprintLetter'
+import { DEFAULT_EXAMINATION_BASES } from './bapStandard'
 import type {
   ReportSource,
   Activity,
@@ -1405,6 +1406,7 @@ const SETTINGS: CompanySettings = {
   requireTwoFactor: true,
   watermarkExports: true,
   autoLockMinutes: 15,
+  examinationBases: DEFAULT_EXAMINATION_BASES,
 }
 
 const TEMPLATES: Template[] = [
@@ -1677,8 +1679,17 @@ const INTERVIEWEES: Interviewee[] = [
     position: 'Senior Procurement Manager',
     identityNo: 'EMP-40218',
     phone: '+1 555 0142',
-    address: 'Metro Office, Level 4 — Procurement',
+    address: 'Jl. Cikini Raya No. 5, Jakarta Pusat',
     nodeId: 'n-grant',
+    gender: 'laki-laki',
+    birthPlace: 'Medan',
+    birthDate: '1979-06-21',
+    religion: 'Islam',
+    maritalStatus: 'Menikah',
+    nationality: 'Indonesia',
+    education: 'S2',
+    occupation: 'Karyawan BUMN',
+    company: 'PT Pertamina International Shipping',
     createdAt: iso(60, 9, 0),
   },
   {
@@ -1689,8 +1700,17 @@ const INTERVIEWEES: Interviewee[] = [
     position: 'Procurement Analyst',
     identityNo: 'EMP-40887',
     phone: '+1 555 0173',
-    address: 'Metro Office, Level 4 — Procurement',
+    address: 'Jl. Tebet Raya No. 18, Jakarta Selatan',
     nodeId: 'n-mitchell',
+    gender: 'perempuan',
+    birthPlace: 'Bandung',
+    birthDate: '1994-03-12',
+    religion: 'Katolik',
+    maritalStatus: 'Belum menikah',
+    nationality: 'Indonesia',
+    education: 'D4 / S1',
+    occupation: 'Karyawan swasta',
+    company: 'PT Pertamina International Shipping',
     createdAt: iso(58, 9, 0),
   },
   {
@@ -1701,7 +1721,17 @@ const INTERVIEWEES: Interviewee[] = [
     position: 'Facilities Contractor',
     identityNo: 'CTR-1180',
     phone: '+1 555 0219',
+    address: 'Jl. Kemang Selatan No. 7, Jakarta Selatan',
     nodeId: 'n-lee',
+    gender: 'laki-laki',
+    birthPlace: 'Surabaya',
+    birthDate: '1988-09-02',
+    religion: 'Kristen Protestan',
+    maritalStatus: 'Menikah',
+    nationality: 'Indonesia',
+    education: 'SMA / SMK',
+    occupation: 'Karyawan swasta',
+    company: 'PT Metro Facility Services',
     createdAt: iso(57, 13, 10),
   },
   {
