@@ -10,7 +10,11 @@ export interface MediaRecorderState {
   /** The browser can record at all. */
   supported: boolean
   recording: boolean
-  /** Seconds since recording started. */
+  /** Recording is on hold — nothing is captured until it resumes. */
+  paused: boolean
+  /** The microphone is muted — the recording carries silence meanwhile. */
+  muted: boolean
+  /** Seconds recorded so far, not counting time on hold. */
   elapsed: number
   /** The live stream — for a camera preview while recording. */
   stream: MediaStream | null
@@ -21,6 +25,9 @@ export interface MediaRecorderState {
   stop: () => Promise<RecordedMedia | null>
   /** Stops and throws the recording away. */
   cancel: () => void
+  pause: () => void
+  resume: () => void
+  toggleMute: () => void
 }
 
 const VIDEO_TYPES = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4']
@@ -42,6 +49,8 @@ export function useMediaRecorder(): MediaRecorderState {
     typeof window !== 'undefined' && typeof MediaRecorder !== 'undefined' && !!navigator.mediaDevices?.getUserMedia
 
   const [recording, setRecording] = useState(false)
+  const [paused, setPaused] = useState(false)
+  const [muted, setMuted] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [stream, setStream] = useState<MediaStream | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -49,6 +58,13 @@ export function useMediaRecorder(): MediaRecorderState {
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const startedRef = useRef(0)
+  /** Time spent on hold so far, and when the current hold began. */
+  const heldRef = useRef(0)
+  const holdStartRef = useRef<number | null>(null)
+  const recordedSeconds = () => {
+    const hold = heldRef.current + (holdStartRef.current ? Date.now() - holdStartRef.current : 0)
+    return Math.max(0, Math.floor((Date.now() - startedRef.current - hold) / 1000))
+  }
   const timerRef = useRef<number | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
 
@@ -59,11 +75,13 @@ export function useMediaRecorder(): MediaRecorderState {
     streamRef.current = null
     setStream(null)
     setRecording(false)
+    setPaused(false)
+    setMuted(false)
   }, [])
 
   useEffect(
     () => () => {
-      if (recorderRef.current?.state === 'recording') recorderRef.current.stop()
+      if (recorderRef.current && recorderRef.current.state !== 'inactive') recorderRef.current.stop()
       release()
     },
     [release],
@@ -85,10 +103,12 @@ export function useMediaRecorder(): MediaRecorderState {
         recorderRef.current = rec
         streamRef.current = media
         startedRef.current = Date.now()
+        heldRef.current = 0
+        holdStartRef.current = null
         setStream(media)
         setElapsed(0)
         setRecording(true)
-        timerRef.current = window.setInterval(() => setElapsed(Math.floor((Date.now() - startedRef.current) / 1000)), 500)
+        timerRef.current = window.setInterval(() => setElapsed(recordedSeconds()), 500)
         return true
       } catch (e) {
         const name = (e as DOMException)?.name
@@ -104,7 +124,7 @@ export function useMediaRecorder(): MediaRecorderState {
     () =>
       new Promise<RecordedMedia | null>((resolve) => {
         const rec = recorderRef.current
-        if (!rec || rec.state !== 'recording') {
+        if (!rec || rec.state === 'inactive') {
           release()
           resolve(null)
           return
@@ -112,7 +132,7 @@ export function useMediaRecorder(): MediaRecorderState {
         rec.onstop = () => {
           const mime = rec.mimeType || chunksRef.current[0]?.type || 'application/octet-stream'
           const blob = new Blob(chunksRef.current, { type: mime })
-          const durationSec = Math.max(1, Math.round((Date.now() - startedRef.current) / 1000))
+          const durationSec = Math.max(1, recordedSeconds())
           recorderRef.current = null
           release()
           resolve(blob.size > 0 ? { blob, mime, durationSec } : null)
@@ -124,7 +144,7 @@ export function useMediaRecorder(): MediaRecorderState {
 
   const cancel = useCallback(() => {
     const rec = recorderRef.current
-    if (rec && rec.state === 'recording') {
+    if (rec && rec.state !== 'inactive') {
       rec.onstop = null
       rec.stop()
     }
@@ -133,7 +153,32 @@ export function useMediaRecorder(): MediaRecorderState {
     release()
   }, [release])
 
-  return { supported, recording, elapsed, stream, error, start, stop, cancel }
+  const pause = useCallback(() => {
+    const rec = recorderRef.current
+    if (rec?.state !== 'recording') return
+    rec.pause()
+    holdStartRef.current = Date.now()
+    setPaused(true)
+  }, [])
+
+  const resume = useCallback(() => {
+    const rec = recorderRef.current
+    if (rec?.state !== 'paused') return
+    rec.resume()
+    if (holdStartRef.current) heldRef.current += Date.now() - holdStartRef.current
+    holdStartRef.current = null
+    setPaused(false)
+  }, [])
+
+  const toggleMute = useCallback(() => {
+    const tracks = streamRef.current?.getAudioTracks() ?? []
+    if (tracks.length === 0) return
+    const next = !tracks[0].enabled
+    tracks.forEach((t) => (t.enabled = next))
+    setMuted(!next)
+  }, [])
+
+  return { supported, recording, paused, muted, elapsed, stream, error, start, stop, cancel, pause, resume, toggleMute }
 }
 
 export const formatDuration = (sec: number) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`

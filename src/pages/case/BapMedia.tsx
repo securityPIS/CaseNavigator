@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Circle, Clapperboard, Mic, MicOff, Plus, Search, Square, Trash2, Video, VideoOff, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import { Circle, Clapperboard, Maximize2, Mic, MicOff, Minimize2, Pause, Plus, Search, Square, Trash2, Video, VideoOff, X } from 'lucide-react'
 import { db } from '@/domain/db'
 import type { Bap, BapRecording, MediaClip, Question, QuestionSet, RecordingMode } from '@/domain/types'
 import { cn, formatDateTime, uid } from '@/lib/utils'
-import { Badge, Button, IconButton, Input } from '@/components/ui/primitives'
+import { Button, IconButton, Input } from '@/components/ui/primitives'
 import { Modal } from '@/components/ui/Modal'
 import { useBlobPreview } from '@/components/ui/BlobPreview'
 import { formatDuration, useMediaRecorder } from '@/hooks/useMediaRecorder'
@@ -58,13 +59,8 @@ export function SessionRecorder({ bap, locked, recordedBy }: { bap: Bap; locked:
   const mode: RecordingMode | null = videoOn && audioOn ? 'av' : videoOn ? 'video' : audioOn ? 'audio' : null
   const [consent, setConsent] = useState(false)
   const [saving, setSaving] = useState(false)
-  const previewRef = useRef<HTMLVideoElement>(null)
   const recordings = bap.recordings ?? []
   const [activeMode, setActiveMode] = useState<RecordingMode>('av')
-
-  useEffect(() => {
-    if (previewRef.current) previewRef.current.srcObject = media.stream
-  }, [media.stream])
 
   const start = async () => {
     if (!mode) return
@@ -118,32 +114,23 @@ export function SessionRecorder({ bap, locked, recordedBy }: { bap: Bap; locked:
       {!locked && media.supported && (
         <div className="rounded-xl border border-line-soft bg-abyss/30 p-3">
           {media.recording ? (
-            <div className="space-y-3">
-              {live.video ? (
-                <video ref={previewRef} autoPlay muted playsInline className="aspect-video w-full max-w-[560px] rounded-lg border border-danger/40 bg-black object-cover" />
-              ) : (
-                <div className="flex h-20 max-w-[560px] items-center justify-center gap-1 rounded-lg border border-danger/30 bg-danger/6">
-                  {Array.from({ length: 24 }).map((_, i) => (
-                    <span
-                      key={i}
-                      className="w-1 animate-pulse rounded-full bg-danger/70"
-                      style={{ height: `${12 + ((i * 37) % 40)}px`, animationDelay: `${(i % 6) * 120}ms` }}
-                    />
-                  ))}
-                </div>
-              )}
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge color="#EF4444" size="sm" dot>
-                  Merekam · {live.label}
-                </Badge>
-                <div className="flex-1" />
-                <Button size="sm" variant="ghost" icon={<X size={12} />} onClick={media.cancel}>
-                  Batal
-                </Button>
-                <Button size="sm" variant="danger" icon={<Square size={11} className="fill-current" />} onClick={stop} loading={saving}>
-                  Berhenti & simpan
-                </Button>
+            // The camera shows in the floating window; here, only a notice.
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="relative flex size-3 shrink-0">
+                <span className="absolute inline-flex size-full animate-ping rounded-full bg-danger/60" />
+                <span className="relative inline-flex size-3 rounded-full bg-danger" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[12.5px] font-medium text-ink">
+                  {media.paused ? 'Perekaman dijeda' : `Sedang merekam ${live.video ? 'video' : 'audio'}`} ·{' '}
+                  <span className="tnum">{formatDuration(media.elapsed)}</span>
+                  {media.muted && <span className="ml-2 text-[11px] font-normal text-warn">mikrofon dimatikan</span>}
+                </p>
+                <p className="text-[11px] text-ink-4">{live.label} · kontrol rekaman ada di jendela kanan atas.</p>
               </div>
+              <Button size="sm" variant="danger" icon={<Square size={11} className="fill-current" />} onClick={stop} loading={saving}>
+                Berhenti & simpan
+              </Button>
             </div>
           ) : (
             <div className="flex flex-wrap items-center gap-3">
@@ -182,6 +169,24 @@ export function SessionRecorder({ bap, locked, recordedBy }: { bap: Bap; locked:
         </div>
       )}
 
+      {media.recording && (
+        <RecordingWindow
+          stream={media.stream}
+          video={live.video}
+          audio={live.audio}
+          label={live.label}
+          elapsed={media.elapsed}
+          paused={media.paused}
+          muted={media.muted}
+          saving={saving}
+          onPause={media.pause}
+          onResume={media.resume}
+          onToggleMute={media.toggleMute}
+          onStop={stop}
+          onCancel={media.cancel}
+        />
+      )}
+
       {recordings.length > 0 ? (
         <div className="mt-3 grid gap-3 lg:grid-cols-2">
           {recordings.map((r, i) => {
@@ -214,6 +219,175 @@ export function SessionRecorder({ bap, locked, recordedBy }: { bap: Bap; locked:
         locked && <p className="text-[11.5px] text-ink-4">Tidak ada rekaman pada BAP ini.</p>
       )}
     </div>
+  )
+}
+
+/* ------------------------------------------------------ Recording window */
+
+function WindowButton({
+  label,
+  onClick,
+  danger,
+  active,
+  disabled,
+  children,
+}: {
+  label: string
+  onClick: () => void
+  danger?: boolean
+  active?: boolean
+  disabled?: boolean
+  children: ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        'flex size-9 items-center justify-center rounded-full text-white backdrop-blur-sm transition-colors disabled:opacity-50',
+        danger ? 'bg-[#EF4444] hover:bg-[#DC2626]' : active ? 'bg-white/30 hover:bg-white/40' : 'bg-white/12 hover:bg-white/24',
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
+/**
+ * The live recording, floating in the top-right corner over whatever the
+ * investigator is doing — like picture-in-picture, but inside the app, so it
+ * stays put while they scroll through the questions. Its own controls pause
+ * and resume, mute the microphone, and stop.
+ */
+function RecordingWindow({
+  stream,
+  video,
+  audio,
+  label,
+  elapsed,
+  paused,
+  muted,
+  saving,
+  onPause,
+  onResume,
+  onToggleMute,
+  onStop,
+  onCancel,
+}: {
+  stream: MediaStream | null
+  video: boolean
+  audio: boolean
+  label: string
+  elapsed: number
+  paused: boolean
+  muted: boolean
+  saving: boolean
+  onPause: () => void
+  onResume: () => void
+  onToggleMute: () => void
+  onStop: () => void
+  onCancel: () => void
+}) {
+  const ref = useRef<HTMLVideoElement>(null)
+  const [small, setSmall] = useState(false)
+
+  useEffect(() => {
+    if (ref.current) ref.current.srcObject = stream
+  }, [stream, small])
+
+  const status = (
+    <span className="flex items-center gap-1.5 rounded-full bg-black/55 px-2 py-0.5 text-[11px] font-semibold text-white backdrop-blur-sm">
+      {paused ? <Pause size={10} className="fill-current" /> : <span className="size-2 animate-pulse rounded-full bg-[#EF4444]" />}
+      {paused ? 'DIJEDA' : 'REC'} <span className="tnum font-medium">{formatDuration(elapsed)}</span>
+    </span>
+  )
+
+  const controls = (
+    <>
+      {paused ? (
+        <WindowButton label="Lanjut merekam" onClick={onResume}>
+          <Circle size={13} className="fill-[#EF4444] text-[#EF4444]" />
+        </WindowButton>
+      ) : (
+        <WindowButton label="Jeda rekaman" onClick={onPause}>
+          <Pause size={15} className="fill-current" />
+        </WindowButton>
+      )}
+      {audio && (
+        <WindowButton label={muted ? 'Nyalakan mikrofon' : 'Matikan mikrofon'} onClick={onToggleMute} active={muted}>
+          {muted ? <MicOff size={15} /> : <Mic size={15} />}
+        </WindowButton>
+      )}
+      <WindowButton label="Berhenti & simpan" onClick={onStop} danger disabled={saving}>
+        <Square size={13} className="fill-current" />
+      </WindowButton>
+    </>
+  )
+
+  return createPortal(
+    <div
+      role="region"
+      aria-label="Perekaman berlangsung"
+      className="fixed right-4 top-[72px] z-[150] overflow-hidden rounded-2xl border border-[#EF4444]/60 bg-[#0B0F19] shadow-[0_20px_60px_-12px_rgb(0_0_0/0.75)] animate-scale-in"
+      style={{ width: small ? 'auto' : 'min(360px, calc(100vw - 32px))' }}
+    >
+      {small ? (
+        <div className="flex items-center gap-2 p-1.5 pl-2.5">
+          {status}
+          {controls}
+          <WindowButton label="Perbesar jendela" onClick={() => setSmall(false)}>
+            <Maximize2 size={14} />
+          </WindowButton>
+        </div>
+      ) : (
+        <div className="relative">
+          {video ? (
+            <video
+              ref={ref}
+              autoPlay
+              muted
+              playsInline
+              disablePictureInPicture
+              className={cn('block aspect-video w-full bg-black object-cover', paused && 'opacity-50')}
+            />
+          ) : (
+            <div className="flex h-[120px] items-center justify-center gap-1 bg-gradient-to-b from-[#2A0E14] to-[#0B0F19]">
+              {Array.from({ length: 28 }).map((_, i) => (
+                <span
+                  key={i}
+                  className={cn('w-1 rounded-full bg-[#EF4444]/80', !paused && !muted && 'animate-pulse')}
+                  style={{ height: paused || muted ? 4 : `${10 + ((i * 37) % 44)}px`, animationDelay: `${(i % 7) * 110}ms` }}
+                />
+              ))}
+            </div>
+          )}
+
+          <div className="absolute inset-x-0 top-0 flex items-center justify-between p-2">
+            {status}
+            <div className="flex gap-1">
+              <WindowButton label="Perkecil jendela" onClick={() => setSmall(true)}>
+                <Minimize2 size={14} />
+              </WindowButton>
+              <WindowButton label="Batalkan rekaman" onClick={onCancel}>
+                <X size={15} />
+              </WindowButton>
+            </div>
+          </div>
+
+          <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-gradient-to-t from-black/80 to-transparent p-2.5 pt-8">
+            <span className="truncate text-[11px] font-medium text-white/85">
+              {label}
+              {muted && ' · mikrofon mati'}
+            </span>
+            <div className="flex shrink-0 gap-1.5">{controls}</div>
+          </div>
+        </div>
+      )}
+    </div>,
+    document.body,
   )
 }
 
