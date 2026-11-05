@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { AlertTriangle, Building2, Check, Database, RotateCcw, Save, Shield, Upload, X } from 'lucide-react'
+import { AlertTriangle, Building2, Check, ChevronDown, ChevronUp, Database, Plus, RotateCcw, Save, Shield, Upload, X } from 'lucide-react'
 import { db, resetDatabase } from '@/domain/db'
 import type { CompanySettings } from '@/domain/types'
 import { cn } from '@/lib/utils'
-import { Button, Card, Input, Select, Switch } from '@/components/ui/primitives'
+import { Button, Card, IconButton, Input, Select, Switch, Textarea } from '@/components/ui/primitives'
+import { DEFAULT_EXAMINATION_BASES } from '@/domain/bapStandard'
 import { Modal } from '@/components/ui/Modal'
 import { PageSpinner } from '@/components/ui/PageSpinner'
 import { AdminSection, AdminShell } from './AdminShell'
@@ -32,7 +33,12 @@ export function CompanySettingPage() {
   const save = async () => {
     setSaving(true)
     try {
-      await db.settings.put(draft)
+      // Empty lines in the master data mean nothing — drop them on save.
+      const clean = draft.examinationBases
+        ? { ...draft, examinationBases: draft.examinationBases.map((b) => ({ ...b, text: b.text.trim() })).filter((b) => b.text) }
+        : draft
+      await db.settings.put(clean)
+      setDraft(clean)
       await db.activities.add({
         id: `ac-${Date.now()}`,
         actorId: 'u-jason',
@@ -221,6 +227,68 @@ export function CompanySettingPage() {
               />
             </div>
           </div>
+        </Card>
+      </AdminSection>
+
+      {/* Master data */}
+      <AdminSection
+        title="Master Data — Dasar Pemeriksaan"
+        description="Dasar hukum yang ditawarkan saat membuka BAP (“Selaku Investigator … berdasarkan:”). Setiap BAP baru dimulai dengan daftar ini, lalu SPRINT perkara."
+      >
+        <Card className="space-y-2 p-4">
+          {(draft.examinationBases ?? DEFAULT_EXAMINATION_BASES).map((b, i, list) => (
+            <div key={b.id} className="flex items-start gap-2">
+              <span className="mt-2 w-5 shrink-0 text-right text-[11px] text-ink-4 tnum">{i + 1}.</span>
+              <Textarea
+                rows={2}
+                value={b.text}
+                onChange={(e) => set('examinationBases', list.map((x) => (x.id === b.id ? { ...x, text: e.target.value } : x)))}
+                className="text-[12px]"
+              />
+              <div className="flex shrink-0 flex-col">
+                <IconButton
+                  label="Naikkan"
+                  size={22}
+                  disabled={i === 0}
+                  onClick={() => {
+                    const next = [...list]
+                    ;[next[i - 1], next[i]] = [next[i], next[i - 1]]
+                    set('examinationBases', next)
+                  }}
+                >
+                  <ChevronUp size={11} />
+                </IconButton>
+                <IconButton
+                  label="Turunkan"
+                  size={22}
+                  disabled={i === list.length - 1}
+                  onClick={() => {
+                    const next = [...list]
+                    ;[next[i + 1], next[i]] = [next[i], next[i + 1]]
+                    set('examinationBases', next)
+                  }}
+                >
+                  <ChevronDown size={11} />
+                </IconButton>
+                <IconButton
+                  label="Hapus"
+                  size={22}
+                  className="hover:text-danger"
+                  onClick={() => set('examinationBases', list.filter((x) => x.id !== b.id))}
+                >
+                  <X size={11} />
+                </IconButton>
+              </div>
+            </div>
+          ))}
+          <button
+            onClick={() =>
+              set('examinationBases', [...(draft.examinationBases ?? DEFAULT_EXAMINATION_BASES), { id: `eb-${Date.now().toString(36)}`, text: '' }])
+            }
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-line-strong py-2 text-[11.5px] text-ink-3 transition-colors hover:border-brand/50 hover:text-brand-bright"
+          >
+            <Plus size={12} /> Tambah dasar pemeriksaan
+          </button>
         </Card>
       </AdminSection>
 

@@ -471,6 +471,21 @@ export interface Interviewee {
   address?: string
   /** Links the terperiksa to their graph entity when one exists. */
   nodeId?: string
+  /* Identity as the BAP records it (TKO B14-002 Lampiran 6, page 19). Filled
+     in when the terperiksa is added; copied onto each BAP when it opens. */
+  gender?: 'laki-laki' | 'perempuan'
+  birthPlace?: string
+  /** YYYY-MM-DD */
+  birthDate?: string
+  religion?: string
+  maritalStatus?: string
+  nationality?: string
+  education?: string
+  occupation?: string
+  /** Employer, e.g. the ship owner. */
+  company?: string
+  /** Photo of the KTP, kept in the blobs table. */
+  ktpBlobId?: string
   createdAt: string
 }
 
@@ -520,10 +535,19 @@ export interface Bap {
   answers: BapAnswer[]
   /** Ad-hoc questions the investigator added beyond the template set. */
   extraQuestions?: BapExtraQuestion[]
+  /** The examining investigator — "saya: NAMA INVESTIGATOR". Older BAPs
+      have none; their first investigatorId stands in. */
+  examinerId?: string
+  /** Investigators accompanying the examiner — optional. investigatorIds
+      always holds the examiner followed by these. */
+  companionIds?: string[]
+  /** "Selaku Investigator … berdasarkan:" — the authority the examination
+      rests on, in the order printed. */
+  bases?: BapBasis[]
   /**
    * The opening of the BAP (TKO B14-002 Lampiran 6, page 19): when and where
-   * the examination happens and who the terperiksa is. Filled in before any
-   * question is asked.
+   * the examination happens and who the terperiksa is — the person's details
+   * copied from their terperiksa record when the BAP opens.
    */
   identity?: BapIdentity
   notes: string
@@ -531,6 +555,19 @@ export interface Bap {
 }
 
 export type BapTimezone = 'WIB' | 'WITA' | 'WIT'
+
+/** One line of a BAP's "dasar pemeriksaan", with where it came from. */
+export interface BapBasis {
+  id: string
+  source: 'master' | 'sprint' | 'report' | 'custom'
+  text: string
+}
+
+/** A standing legal basis offered to every BAP (Company Setting). */
+export interface ExaminationBasis {
+  id: string
+  text: string
+}
 
 /**
  * Identity of the terperiksa as recorded at the start of one examination — a
@@ -672,6 +709,9 @@ export interface CompanySettings {
   requireTwoFactor: boolean
   watermarkExports: boolean
   autoLockMinutes: number
+  /** Master data: the standing bases a BAP can cite. Absent = the defaults
+      in domain/bapStandard.ts. */
+  examinationBases?: ExaminationBasis[]
 }
 
 export type TemplateKind = 'report' | 'deck' | 'mail' | 'evidence-label' | 'sprint'

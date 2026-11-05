@@ -1,4 +1,14 @@
-import type { BapIdentity, Interviewee, Question } from './types'
+import type {
+  Bap,
+  BapBasis,
+  BapIdentity,
+  CompanySettings,
+  ExaminationBasis,
+  Interviewee,
+  Question,
+  ReportSource,
+  Sprint,
+} from './types'
 
 /**
  * The fixed parts of a Berita Acara Pemeriksaan under TKO B14-002/PIS0420/
@@ -164,47 +174,101 @@ export const RELIGIONS = ['Islam', 'Kristen Protestan', 'Katolik', 'Hindu', 'Bud
 export const MARITAL = ['Belum menikah', 'Menikah', 'Cerai hidup', 'Cerai mati']
 export const EDUCATION = ['SD', 'SMP', 'SMA / SMK', 'D3', 'D4 / S1', 'S2', 'S3']
 
-/** A fresh identity form, started from what the case already knows. */
-export function newIdentity(person: Interviewee, matter: string): BapIdentity {
-  return {
-    timezone: 'WIB',
-    matter,
-    fullName: person.name,
-    gender: '',
-    occupation: '',
-    position: person.position === '—' ? '' : person.position,
-    company: '',
-    education: '',
-    birthPlace: '',
-    birthDate: '',
-    religion: '',
-    maritalStatus: '',
-    nationality: 'Indonesia',
-    address: person.address ?? '',
-  }
-}
-
-const IDENTITY_REQUIRED: [keyof BapIdentity, string][] = [
-  ['fullName', 'Nama lengkap'],
+const PERSON_REQUIRED: [keyof Interviewee, string][] = [
+  ['name', 'Nama lengkap'],
   ['gender', 'Jenis kelamin'],
+  ['nationality', 'Kewarganegaraan'],
   ['birthPlace', 'Tempat lahir'],
   ['birthDate', 'Tanggal lahir'],
   ['religion', 'Agama'],
   ['maritalStatus', 'Status'],
-  ['nationality', 'Kewarganegaraan'],
   ['education', 'Pendidikan'],
   ['occupation', 'Pekerjaan'],
   ['position', 'Jabatan'],
   ['company', 'Perusahaan'],
   ['address', 'Alamat tempat tinggal'],
-  ['matter', 'Permasalahan'],
 ]
 
-/** What still has to be filled in before the examination may begin. */
-export function identityMissing(i: BapIdentity, location: string): string[] {
-  const missing = IDENTITY_REQUIRED.filter(([k]) => !String(i[k] ?? '').trim()).map(([, label]) => label)
-  if (!location.trim() || location === 'Belum ditentukan') missing.unshift('Tempat pemeriksaan')
-  return missing
+/** What the terperiksa form still lacks before a BAP can be opened. */
+export function personMissing(p: Partial<Interviewee>): string[] {
+  return PERSON_REQUIRED.filter(([k]) => {
+    const v = String(p[k] ?? '').trim()
+    return !v || v === '—'
+  }).map(([, label]) => label)
+}
+
+/** The BAP's snapshot of the terperiksa, plus the BAP's own opening details. */
+export function identityFrom(
+  p: Interviewee,
+  opening: Pick<BapIdentity, 'timezone' | 'vessel' | 'vesselLocation' | 'matter'>,
+  completedAt: string,
+): BapIdentity {
+  return {
+    ...opening,
+    fullName: p.name,
+    gender: p.gender ?? '',
+    occupation: p.occupation ?? '',
+    position: p.position === '—' ? '' : p.position,
+    company: p.company ?? '',
+    education: p.education ?? '',
+    birthPlace: p.birthPlace ?? '',
+    birthDate: p.birthDate ?? '',
+    religion: p.religion ?? '',
+    maritalStatus: p.maritalStatus ?? '',
+    nationality: p.nationality ?? '',
+    address: p.address ?? '',
+    ktpBlobId: p.ktpBlobId,
+    completedAt,
+  }
+}
+
+/* ------------------------------------------------------- Pemeriksa & dasar */
+
+/** The examiner and the companions of a BAP. BAPs from before the split
+    keep everyone in investigatorIds, the examiner first. */
+export function examinerOf(bap: Pick<Bap, 'examinerId' | 'investigatorIds'>): string | undefined {
+  return bap.examinerId ?? bap.investigatorIds[0]
+}
+export function companionsOf(bap: Pick<Bap, 'examinerId' | 'companionIds' | 'investigatorIds'>): string[] {
+  return bap.companionIds ?? bap.investigatorIds.filter((id) => id !== examinerOf(bap))
+}
+
+/** The standing bases every PIS Security BAP cites (TKO page 19). */
+export const DEFAULT_EXAMINATION_BASES: ExaminationBasis[] = [
+  {
+    id: 'eb-kpts-66',
+    text: 'Surat Keputusan Direktur Utama Pertamina No: Kpts 66/C00000/2012-S0 tanggal 18 Desember 2012, tentang pemberian kewenangan pembuatan Berita Acara Pemeriksaan (BAP) kepada Fungsi Security.',
+  },
+  {
+    id: 'eb-kpts-47',
+    text: 'Surat Keputusan Direksi PT Pertamina No. Kpts 47/C00000/2019-S0 tanggal 31 Desember 2019, tentang Kebijakan Pokok Pengawasan.',
+  },
+]
+
+export const masterBases = (settings: CompanySettings | undefined): ExaminationBasis[] =>
+  settings?.examinationBases ?? DEFAULT_EXAMINATION_BASES
+
+export function sprintBasisText(sp: Sprint): string {
+  return `Surat Perintah VP HSSE PT Pertamina International Shipping No. ${sp.number} tanggal ${tanggalPanjang(sp.issuedAt)} perihal Pelaksanaan Investigasi ${sp.subject}.`
+}
+
+export function reportBasisText(src: ReportSource): string {
+  switch (src.kind) {
+    case 'wbs':
+      return `Laporan melalui Whistle Blower System (WBS) Nomor ${src.wbsNumber ?? '…'} tanggal ${tanggalPanjang(src.recordedAt)}.`
+    case 'management':
+      return `Nota Dinas Nomor ${src.notaDinasNumber ?? '…'} (Management Report) tanggal ${tanggalPanjang(src.recordedAt)}.`
+    case 'internal':
+      return `Investigation Notes (Internal Report) tanggal ${tanggalPanjang(src.recordedAt)}.`
+  }
+}
+
+/** The bases a new BAP starts with: the master list, then the SPRINT. */
+export function defaultBases(settings: CompanySettings | undefined, sprint: Sprint | undefined): BapBasis[] {
+  return [
+    ...masterBases(settings).map((m) => ({ id: `b-${m.id}`, source: 'master' as const, text: m.text })),
+    ...(sprint ? [{ id: `b-sprint-${sprint.id}`, source: 'sprint' as const, text: sprintBasisText(sprint) }] : []),
+  ]
 }
 
 /* ------------------------------------------------------------- Wording */
@@ -227,7 +291,8 @@ export function openingSentence(i: BapIdentity, startedAt: string, location: str
   const pukul = `${String(d.getHours()).padStart(2, '0')}.${String(d.getMinutes()).padStart(2, '0')}`
   const tempat = location.trim() && location !== 'Belum ditentukan' ? location.trim() : '…'
   const kapal = i.vessel?.trim() ? `, saat Kapal ${i.vessel.trim()}${i.vesselLocation?.trim() ? ` di ${i.vesselLocation.trim()}` : ''}` : ''
-  const pemeriksa = investigators.length ? investigators.join(' bersama dengan ') : '…'
+  const [examiner, ...companions] = investigators
+  const pemeriksa = examiner ? (companions.length ? `${examiner} bersama dengan ${companions.join(', ')}` : examiner) : '…'
   return (
     `Pada hari ${HARI[d.getDay()]} tanggal ${tanggalPanjang(startedAt)}, pukul ${pukul} ${i.timezone}, bertempat di ${tempat}${kapal}, ` +
     `${pemeriksa} meminta keterangan terhadap seorang ${i.gender || '…'} yang mengaku bernama ${i.fullName.trim() || '…'}, ` +
