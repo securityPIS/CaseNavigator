@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Circle, Clapperboard, Mic, Plus, Search, Square, Trash2, Video, X } from 'lucide-react'
+import { Circle, Clapperboard, Mic, MicOff, Plus, Search, Square, Trash2, Video, VideoOff, X } from 'lucide-react'
 import { db } from '@/domain/db'
 import type { Bap, BapRecording, MediaClip, Question, QuestionSet, RecordingMode } from '@/domain/types'
 import { cn, formatDateTime, uid } from '@/lib/utils'
@@ -51,7 +51,11 @@ const MODE_META: Record<RecordingMode, { label: string; icon: typeof Video; audi
  */
 export function SessionRecorder({ bap, locked, recordedBy }: { bap: Bap; locked: boolean; recordedBy: string }) {
   const media = useMediaRecorder()
-  const [mode, setMode] = useState<RecordingMode>('av')
+  // Two switches, both on by default: video and audio together, or either
+  // one alone.
+  const [videoOn, setVideoOn] = useState(true)
+  const [audioOn, setAudioOn] = useState(true)
+  const mode: RecordingMode | null = videoOn && audioOn ? 'av' : videoOn ? 'video' : audioOn ? 'audio' : null
   const [consent, setConsent] = useState(false)
   const [saving, setSaving] = useState(false)
   const previewRef = useRef<HTMLVideoElement>(null)
@@ -63,6 +67,7 @@ export function SessionRecorder({ bap, locked, recordedBy }: { bap: Bap; locked:
   }, [media.stream])
 
   const start = async () => {
+    if (!mode) return
     const m = MODE_META[mode]
     setActiveMode(mode)
     const ok = await media.start({ audio: m.audio, video: m.video })
@@ -142,34 +147,37 @@ export function SessionRecorder({ bap, locked, recordedBy }: { bap: Bap; locked:
             </div>
           ) : (
             <div className="flex flex-wrap items-center gap-3">
-              <div role="group" aria-label="Jenis rekaman" className="flex gap-1">
-                {(Object.keys(MODE_META) as RecordingMode[]).map((k) => {
-                  const m = MODE_META[k]
-                  return (
-                    <button
-                      key={k}
-                      type="button"
-                      onClick={() => setMode(k)}
-                      className={cn(
-                        'flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[11.5px] transition-colors',
-                        mode === k ? 'border-brand/50 bg-brand/12 font-medium text-brand-bright' : 'border-line bg-abyss/40 text-ink-3 hover:border-line-strong',
-                      )}
-                    >
-                      <m.icon size={12} /> {m.label}
-                    </button>
-                  )
-                })}
+              <div role="group" aria-label="Yang direkam" className="flex gap-1.5">
+                {[
+                  { label: 'Video', on: videoOn, set: setVideoOn, Icon: videoOn ? Video : VideoOff },
+                  { label: 'Audio', on: audioOn, set: setAudioOn, Icon: audioOn ? Mic : MicOff },
+                ].map(({ label, on, set, Icon }) => (
+                  <button
+                    key={label}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => set(!on)}
+                    className={cn(
+                      'flex h-8 items-center gap-1.5 rounded-lg border px-3 text-[11.5px] transition-colors',
+                      on ? 'border-brand/50 bg-brand/12 font-medium text-brand-bright' : 'border-line bg-abyss/40 text-ink-4 hover:border-line-strong',
+                    )}
+                  >
+                    <Icon size={13} /> {label}
+                    <span className={cn('ml-0.5 text-[9.5px] font-semibold', on ? 'text-brand-bright' : 'text-ink-4')}>{on ? 'ON' : 'OFF'}</span>
+                  </button>
+                ))}
               </div>
               <label className="flex cursor-pointer items-center gap-2 text-[11.5px] text-ink-2">
                 <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} className="size-4 accent-[#3B82F6]" />
                 Terperiksa menyetujui perekaman
               </label>
               <div className="flex-1" />
-              <Button size="sm" variant="primary" icon={<Circle size={10} className="fill-current" />} onClick={start} disabled={!consent}>
+              <Button size="sm" variant="primary" icon={<Circle size={10} className="fill-current" />} onClick={start} disabled={!consent || !mode}>
                 Mulai rekam
               </Button>
             </div>
           )}
+          {!media.recording && !mode && <p className="mt-2 text-[11px] text-warn">Nyalakan video, audio, atau keduanya untuk merekam.</p>}
           {media.error && !media.recording && <p className="mt-2 text-[11px] text-warn">{MEDIA_ERROR[media.error]}</p>}
         </div>
       )}
