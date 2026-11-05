@@ -16,6 +16,7 @@ import {
   Search,
 } from 'lucide-react'
 import { db } from '@/domain/db'
+import { standardQuestionLabel } from '@/domain/bapStandard'
 import { sprintState, SPRINT_STATE_META } from '@/domain/access'
 import type {
   BapStatus,
@@ -225,7 +226,8 @@ function useInsertBlocks(caseId: string): InsertBlock[] | undefined {
           .slice(0, 3)
           .map((a) => {
             const q = questions.find((x) => x.id === a.questionId) ?? b.extraQuestions?.find((x) => x.id === a.questionId)
-            return `• ${q?.label ?? 'Pertanyaan'}: ${a.values?.length ? a.values.join(', ') : a.value}`
+            const label = q?.label ?? standardQuestionLabel(a.questionId) ?? 'Pertanyaan'
+            return `• ${label}: ${a.values?.length ? a.values.join(', ') : a.value}`
           })
         out.push({
           id: `int-bap-${b.id}`,
