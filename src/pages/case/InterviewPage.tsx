@@ -103,7 +103,12 @@ export function InterviewPage() {
           </div>
           {conduct && (
             <Tooltip label="Add terperiksa">
-              <IconButton label="Add terperiksa" size={28} onClick={() => setPersonForm('new')}>
+              <IconButton
+                label="Add terperiksa"
+                size={28}
+                className="border-brand-bright/30! bg-brand! text-white! shadow-[0_2px_12px_-4px_rgb(59_130_246/0.7)] hover:bg-brand-bright!"
+                onClick={() => setPersonForm('new')}
+              >
                 <Plus size={14} />
               </IconButton>
             </Tooltip>
@@ -293,9 +298,12 @@ function IntervieweePanel({
                 <Button variant="outline" size="sm" icon={<UserRound size={12} />} onClick={onEditPerson}>
                   Ubah data
                 </Button>
-                <Button variant="primary" size="sm" icon={<Plus size={12} />} onClick={onNewBap}>
-                  New BAP
-                </Button>
+                {/* Once this person's BAP is open, further work happens in it. */}
+                {baps.length === 0 && (
+                  <Button variant="primary" size="sm" icon={<Plus size={12} />} onClick={onNewBap}>
+                    New BAP
+                  </Button>
+                )}
               </div>
             )}
           </div>
