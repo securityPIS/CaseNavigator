@@ -20,6 +20,7 @@ import { FormSection, LetterPreview, ListEditor } from '@/components/sprint/Lett
 import { Field } from '@/pages/CasesPage'
 import { toast } from '@/stores/toast'
 import { useSession } from '@/stores/session'
+import { useCan } from '@/hooks/useAccess'
 import { caseHasSprint } from './SprintParts'
 
 const ACCESS_LABEL = { ketua: 'Ketua Tim', sekretaris: 'Sekretaris', anggota: 'Anggota' } as const
@@ -59,6 +60,10 @@ export function SprintLetterModal({
 }) {
   const newCase = !caseId
   const userId = useSession((st) => st.userId)
+  // Issuing is what grants the team access, so it stays with sprint.manage. A
+  // role that may only create cases opens the case with a draft order, for
+  // someone who holds sprint.manage to complete and issue.
+  const mayIssue = useCan('sprint.manage')
   const [priority, setPriority] = useState<CasePriority>('medium')
   const templates = useLiveQuery(() => db.templates.where('kind').equals('sprint').toArray(), [])
   const settings = useLiveQuery(() => db.settings.get('settings'), [])
@@ -171,8 +176,9 @@ export function SprintLetterModal({
       tags: [],
       openedAt: now,
       updatedAt: now,
-      // Whoever opens the case keeps sight of it even when not on the team.
-      viewerIds: memberIds.includes(userId) ? [] : [userId],
+      // Whoever opens the case keeps sight of it. Being on the team is enough
+      // only once the order is issued — a draft grants nobody access.
+      viewerIds: issue && memberIds.includes(userId) ? [] : [userId],
     })
     await db.activities.add({ id: uid('ac'), caseId: id, actorId: userId, verb: 'opened', object: code, at: now, kind: 'case' })
     return id
@@ -183,6 +189,7 @@ export function SprintLetterModal({
       toast.error('Perihal is required', 'Name the case under investigation before saving.')
       return
     }
+    if (issue && !mayIssue) return
     if (issue && !canIssue) {
       setShowProblems(true)
       return
@@ -247,34 +254,45 @@ export function SprintLetterModal({
       title={sprint ? `Draft ${sprint.number}` : newCase ? 'Buat SPRINT' : 'Draft Surat Perintah'}
       description={
         newCase
-          ? 'A case begins with its Surat Perintah. Saving this form opens the case — titled after the perihal and led by the coordinator — together with its SPRINT.'
+          ? mayIssue
+            ? 'A case begins with its Surat Perintah. Saving this form opens the case — titled after the perihal and led by the coordinator — together with its SPRINT.'
+            : 'A case begins with its Surat Perintah. Saving opens the case with this SPRINT as a draft; someone with the Issue & revoke SPRINT permission completes and issues it.'
           : 'Fill in the case-specific parts of the order. The fixed wording comes from the template; the preview shows the letter as it will print.'
       }
       size="xl"
       footer={
         <>
-          <button
-            type="button"
-            onClick={() => setShowProblems((v) => !v)}
-            className={cn(
-              'mr-auto flex items-center gap-1.5 text-[11px]',
-              problems.length > 0 ? 'text-warn' : 'text-ok',
-            )}
-          >
-            {problems.length > 0 ? <AlertTriangle size={12} /> : <CheckCircle2 size={12} />}
-            {problems.length > 0
-              ? `${problems.length} item${problems.length === 1 ? '' : 's'} to complete before issuing`
-              : 'Ready to issue'}
-          </button>
+          {mayIssue ? (
+            <button
+              type="button"
+              onClick={() => setShowProblems((v) => !v)}
+              className={cn(
+                'mr-auto flex items-center gap-1.5 text-[11px]',
+                problems.length > 0 ? 'text-warn' : 'text-ok',
+              )}
+            >
+              {problems.length > 0 ? <AlertTriangle size={12} /> : <CheckCircle2 size={12} />}
+              {problems.length > 0
+                ? `${problems.length} item${problems.length === 1 ? '' : 's'} to complete before issuing`
+                : 'Ready to issue'}
+            </button>
+          ) : (
+            <p className="mr-auto flex items-center gap-1.5 text-[11px] text-ink-3">
+              <KeyRound size={12} className="shrink-0" />
+              Saved as a draft — issuing needs Issue &amp; revoke SPRINT.
+            </p>
+          )}
           <Button variant="ghost" icon={<Printer size={13} />} onClick={() => printLetterHtml(html)}>
             Print
           </Button>
-          <Button variant="secondary" onClick={() => persist(false)} loading={saving}>
-            Save draft
+          <Button variant={mayIssue ? 'secondary' : 'primary'} onClick={() => persist(false)} loading={saving}>
+            {newCase && !mayIssue ? 'Buat perkara (draft SPRINT)' : 'Save draft'}
           </Button>
-          <Button variant="primary" onClick={() => persist(true)} loading={saving}>
-            Issue SPRINT
-          </Button>
+          {mayIssue && (
+            <Button variant="primary" onClick={() => persist(true)} loading={saving}>
+              Issue SPRINT
+            </Button>
+          )}
         </>
       }
     >

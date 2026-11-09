@@ -41,9 +41,10 @@ export function CasesPage() {
   const users = useLiveQuery(() => db.users.toArray(), [], [])
   const roles = useLiveQuery(() => db.roles.toArray(), [], [])
   const navigate = useNavigate()
-  // A case begins with its SPRINT, so opening one takes both rights.
-  const perms = usePermissions('case.create', 'sprint.manage')
-  const canOpen = perms['case.create'] && perms['sprint.manage']
+  // A case begins with its SPRINT. Create cases is enough to open one with a
+  // draft order; issuing that order (which grants the team access) still
+  // takes Issue & revoke SPRINT, checked inside the form.
+  const canOpen = usePermissions('case.create')['case.create']
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()

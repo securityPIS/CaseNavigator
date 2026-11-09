@@ -94,7 +94,7 @@ export const PERMISSION_GROUPS: { group: string; items: { id: Permission; label:
     items: [
       { id: 'case.view', label: 'View cases', hint: 'Open a case they have access to' },
       { id: 'case.viewAll', label: 'View all cases', hint: 'See every case, not only the ones their SPRINT names' },
-      { id: 'case.create', label: 'Create cases', hint: 'Open a new investigation' },
+      { id: 'case.create', label: 'Create cases', hint: 'Open a new investigation with a draft SPRINT (Buat SPRINT)' },
       { id: 'case.edit', label: 'Edit cases', hint: 'Change graph, status and details' },
       { id: 'case.delete', label: 'Delete cases', hint: 'Permanently remove a case' },
     ],
@@ -103,7 +103,7 @@ export const PERMISSION_GROUPS: { group: string; items: { id: Permission; label:
     group: 'SPRINT',
     items: [
       { id: 'sprint.view', label: 'View SPRINT', hint: 'Read the Surat Perintah and its team' },
-      { id: 'sprint.manage', label: 'Issue & revoke SPRINT', hint: 'Name investigators — this is what grants case access' },
+      { id: 'sprint.manage', label: 'Issue & revoke SPRINT', hint: 'Issue the order that names investigators — this is what grants case access' },
     ],
   },
   {
