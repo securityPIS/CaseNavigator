@@ -37,6 +37,7 @@ import { Modal } from '@/components/ui/Modal'
 import { BlobPreview } from '@/components/ui/BlobPreview'
 import { ENTITY_ICONS } from '@/components/graph/EntityNode'
 import { Field } from '@/pages/CasesPage'
+import { useMe, usePermissions } from '@/hooks/useAccess'
 import { toast } from '@/stores/toast'
 
 const KIND_META: Record<EvidenceKind, { label: string; icon: typeof FileText; color: string }> = {
@@ -67,6 +68,9 @@ export function EvidencePage() {
   const [view, setView] = useState<'grid' | 'table'>('grid')
   const [uploadOpen, setUploadOpen] = useState(false)
   const [dragging, setDragging] = useState(false)
+  // Upload covers adding to and removing from the register; verify covers
+  // moving an item's status. Viewing is gated by the case tab.
+  const { 'evidence.upload': canUpload, 'evidence.verify': canVerify } = usePermissions('evidence.upload', 'evidence.verify')
 
   const items = useLiveQuery(
     () => db.evidence.where('caseId').equals(caseId).reverse().sortBy('collectedAt'),
@@ -117,7 +121,7 @@ export function EvidencePage() {
 
   const onDragEnter = (e: React.DragEvent) => {
     e.preventDefault()
-    if (!e.dataTransfer.types.includes('Files')) return
+    if (!canUpload || !e.dataTransfer.types.includes('Files')) return
     dragDepth.current += 1
     setDragging(true)
   }
@@ -131,7 +135,7 @@ export function EvidencePage() {
     dragDepth.current = 0
     setDragging(false)
     const files = [...e.dataTransfer.files]
-    if (files.length === 0) return
+    if (!canUpload || files.length === 0) return
     setPendingFiles(files)
     setUploadOpen(true)
   }
@@ -213,9 +217,11 @@ export function EvidencePage() {
               ))}
             </div>
 
-            <Button size="sm" variant="primary" icon={<Upload size={13} />} onClick={() => setUploadOpen(true)}>
-              Upload
-            </Button>
+            {canUpload && (
+              <Button size="sm" variant="primary" icon={<Upload size={13} />} onClick={() => setUploadOpen(true)}>
+                Upload
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -228,14 +234,18 @@ export function EvidencePage() {
             title={items.length === 0 ? 'No evidence yet' : 'No evidence matches these filters'}
             description={
               items.length === 0
-                ? 'Drop a file anywhere on this page, or use the Upload button. Files are stored locally in your browser.'
+                ? canUpload
+                  ? 'Drop a file anywhere on this page, or use the Upload button. Files are stored locally in your browser.'
+                  : 'Nothing has been added to the register for this case yet.'
                 : 'Try a different type or status, or clear the search term.'
             }
             action={
               items.length === 0 ? (
-                <Button variant="primary" icon={<Upload size={14} />} onClick={() => setUploadOpen(true)}>
-                  Upload evidence
-                </Button>
+                canUpload ? (
+                  <Button variant="primary" icon={<Upload size={14} />} onClick={() => setUploadOpen(true)}>
+                    Upload evidence
+                  </Button>
+                ) : undefined
               ) : (
                 <Button
                   onClick={() => {
@@ -282,7 +292,16 @@ export function EvidencePage() {
         initialFiles={pendingFiles}
       />
 
-      {open && <EvidenceDetail item={open} nodes={nodes} caseId={caseId} onClose={() => select(null)} />}
+      {open && (
+        <EvidenceDetail
+          item={open}
+          nodes={nodes}
+          caseId={caseId}
+          canRemove={canUpload}
+          canVerify={canVerify}
+          onClose={() => select(null)}
+        />
+      )}
     </div>
   )
 }
@@ -432,11 +451,15 @@ function EvidenceDetail({
   item,
   nodes,
   caseId,
+  canRemove,
+  canVerify,
   onClose,
 }: {
   item: Evidence
   nodes: GraphNode[]
   caseId: string
+  canRemove: boolean
+  canVerify: boolean
   onClose: () => void
 }) {
   const meta = KIND_META[item.kind]
@@ -444,13 +467,16 @@ function EvidenceDetail({
   const Icon = meta.icon
   const linked = nodes.filter((n) => item.linkedNodeIds.includes(n.id))
   const preview = useBlobUrl(item.blobId, item.mime)
+  const { me } = useMe()
 
   const setStatus = async (next: EvidenceStatus) => {
+    if (!canVerify) return
     await db.evidence.update(item.id, {
       status: next,
       custody: [
         ...item.custody,
-        { id: uid('cu'), actor: 'Jason Bennett', action: `Status changed to ${STATUS_META[next].label}`, at: new Date().toISOString() },
+        // The chain of custody names whoever actually made the change.
+        { id: uid('cu'), actor: me?.name ?? 'Unknown user', action: `Status changed to ${STATUS_META[next].label}`, at: new Date().toISOString() },
       ],
     })
     toast.success('Status updated', `${item.ref} is now ${STATUS_META[next].label.toLowerCase()}.`)
@@ -472,6 +498,7 @@ function EvidenceDetail({
   }
 
   const remove = async () => {
+    if (!canRemove) return
     if (item.blobId) await db.blobs.delete(item.blobId)
     await db.evidence.delete(item.id)
     toast.success('Evidence removed', `${item.ref} was deleted from the register.`)
@@ -487,7 +514,7 @@ function EvidenceDetail({
       description={`${item.ref} · ${meta.label} · collected by ${item.collectedBy}`}
       footer={
         <>
-          {item.blobId && (
+          {item.blobId && canRemove && (
             <Button variant="danger" icon={<Trash2 size={13} />} onClick={remove}>
               Delete
             </Button>
@@ -496,7 +523,7 @@ function EvidenceDetail({
           <Button icon={<Download size={13} />} onClick={download}>
             Download
           </Button>
-          {item.status !== 'verified' && item.status !== 'rejected' && (
+          {canVerify && item.status !== 'verified' && item.status !== 'rejected' && (
             <Button variant="primary" icon={<CheckCircle2 size={13} />} onClick={() => setStatus('verified')}>
               Mark verified
             </Button>
@@ -553,13 +580,19 @@ function EvidenceDetail({
           </dl>
 
           {/* Status control */}
-          <Field label="Status" hint="Every change is written to the chain of custody below.">
-            <Select
-              value={item.status}
-              onChange={(e) => setStatus(e.target.value as EvidenceStatus)}
-              options={Object.entries(STATUS_META).map(([k, v]) => ({ value: k, label: v.label }))}
-            />
-          </Field>
+          {canVerify ? (
+            <Field label="Status" hint="Every change is written to the chain of custody below.">
+              <Select
+                value={item.status}
+                onChange={(e) => setStatus(e.target.value as EvidenceStatus)}
+                options={Object.entries(STATUS_META).map(([k, v]) => ({ value: k, label: v.label }))}
+              />
+            </Field>
+          ) : (
+            <p className="rounded-lg border border-line-soft bg-abyss/35 px-3 py-2 text-[11.5px] text-ink-4">
+              Status changes need the Verify evidence permission.
+            </p>
+          )}
 
           {/* Tags */}
           {item.tags.length > 0 && (
@@ -660,6 +693,7 @@ function UploadModal({
   nodes: GraphNode[]
   initialFiles: File[]
 }) {
+  const { me } = useMe()
   const [files, setFiles] = useState<File[]>([])
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -723,7 +757,7 @@ function UploadModal({
           description: description.trim() || 'No description recorded at intake.',
           kind: file ? guessKind(file) : kind,
           status: 'collected',
-          collectedBy: 'Jason Bennett',
+          collectedBy: me?.name ?? 'Unknown user',
           collectedAt: now,
           location: location.trim() || 'Uploaded via CaseNavigator',
           tags: ['uploaded'],
@@ -735,7 +769,7 @@ function UploadModal({
           custody: [
             {
               id: uid('cu'),
-              actor: 'Jason Bennett',
+              actor: me?.name ?? 'Unknown user',
               action: file ? `Uploaded ${file.name}` : 'Item recorded manually',
               at: now,
               note: 'Stored in local browser database (IndexedDB).',
@@ -747,7 +781,7 @@ function UploadModal({
       await db.activities.add({
         id: uid('ac'),
         caseId,
-        actorId: 'u-jason',
+        actorId: me?.id ?? 'unknown',
         verb: 'added',
         object: `${targets.length} evidence item${targets.length > 1 ? 's' : ''}`,
         at: now,

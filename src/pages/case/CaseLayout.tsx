@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
@@ -10,26 +10,32 @@ import {
   Gavel,
   Lightbulb,
   MessageSquareQuote,
-  MoreHorizontal,
   Presentation,
   Shapes,
   ShieldAlert,
+  Trash2,
 } from 'lucide-react'
 import { db } from '@/domain/db'
-import { canAccessCase } from '@/domain/access'
+import { can, canAccessCase } from '@/domain/access'
+import type { Permission } from '@/domain/types'
 import { cn, PRIORITY_META } from '@/lib/utils'
-import { IconButton, tone } from '@/components/ui/primitives'
+import { IconButton, tone, Tooltip } from '@/components/ui/primitives'
 import { PageSpinner } from '@/components/ui/PageSpinner'
+import { NoPermission } from '@/components/access/RequirePermission'
 import { useSession } from '@/stores/session'
 
-const TABS = [
+// Only roles with case.delete ever open it, so it stays out of the main bundle.
+const DeleteCaseModal = lazy(() => import('./DeleteCaseModal').then((m) => ({ default: m.DeleteCaseModal })))
+
+/** Tabs without a permission need only access to the case (case.view). */
+const TABS: { to: string; label: string; icon: typeof Boxes; count: (c: Counts) => number | null; permission?: Permission }[] = [
   { to: 'registration', label: 'Case Registration', icon: ClipboardList, count: (c: Counts) => c.documents },
   { to: 'graph', label: 'Board', icon: Shapes, count: (c: Counts) => c.nodes },
   { to: 'gelar', label: 'Gelar Perkara', icon: Gavel, count: (c: Counts) => c.gelar },
-  { to: 'interview', label: 'Interview', icon: MessageSquareQuote, count: (c: Counts) => c.baps },
-  { to: 'evidence', label: 'Evidence', icon: Boxes, count: (c: Counts) => c.evidence },
+  { to: 'interview', label: 'Interview', icon: MessageSquareQuote, count: (c: Counts) => c.baps, permission: 'interview.view' },
+  { to: 'evidence', label: 'Evidence', icon: Boxes, count: (c: Counts) => c.evidence, permission: 'evidence.view' },
   { to: 'challenge', label: 'Challenge Session', icon: Presentation, count: (c: Counts) => c.slides },
-  { to: 'report', label: 'Investigation Report', icon: FileText, count: () => null },
+  { to: 'report', label: 'Investigation Report', icon: FileText, count: () => null, permission: 'report.view' },
   { to: 'recommendation', label: 'Recommendation', icon: Lightbulb, count: (c: Counts) => c.recs },
 ]
 
@@ -54,8 +60,18 @@ export function CaseLayout() {
     const role = me ? await db.roles.get(me.role) : undefined
     const sprints = await db.sprints.where('caseId').equals(caseId).toArray()
     const rec = await db.cases.get(caseId)
-    return { ok: canAccessCase(me, role, sprints, rec?.viewerIds), roleName: role?.name ?? 'No role', name: me?.name ?? 'Unknown user' }
+    return {
+      ok: canAccessCase(me, role, sprints, rec?.viewerIds),
+      // Held only while the account is active — the same rule canAccessCase applies.
+      perms: new Set(me?.active ? (role?.permissions ?? []) : []),
+      noView: !!me?.active && !can(role, 'case.view'),
+      roleName: role?.name ?? 'No role',
+      name: me?.name ?? 'Unknown user',
+    }
   }, [caseId, userId])
+
+  const { pathname } = useLocation()
+  const [deleting, setDeleting] = useState(false)
 
   const counts = useLiveQuery(
     async (): Promise<Counts> => ({
@@ -85,9 +101,13 @@ export function CaseLayout() {
     )
   }
 
-  if (!access.ok) return <NoAccess code={c.code} name={access.name} roleName={access.roleName} />
+  if (!access.ok) return <NoAccess code={c.code} name={access.name} roleName={access.roleName} noView={access.noView} />
 
   const priority = PRIORITY_META[c.priority]
+  const tabs = TABS.filter((t) => !t.permission || access.perms.has(t.permission))
+  // A tab reached by URL (a bookmark, a search hit) is gated like its link.
+  const segment = pathname.split('/')[3]
+  const blocked = TABS.find((t) => t.to === segment && t.permission && !access.perms.has(t.permission))
 
   return (
     <div className="flex h-full flex-col">
@@ -118,18 +138,36 @@ export function CaseLayout() {
             </h1>
           </div>
 
-          <IconButton label="Case actions" className="mt-1">
-            <MoreHorizontal size={17} />
-          </IconButton>
+          {access.perms.has('case.delete') && (
+            <Tooltip label="Delete case">
+              <IconButton label="Delete case" className="mt-1 hover:text-danger" onClick={() => setDeleting(true)}>
+                <Trash2 size={16} />
+              </IconButton>
+            </Tooltip>
+          )}
         </div>
 
-        <TabBar caseId={caseId} counts={counts} />
+        <TabBar caseId={caseId} counts={counts} tabs={tabs} />
       </div>
 
       {/* Tab content */}
       <div className="relative min-h-0 flex-1 overflow-hidden">
-        <Outlet />
+        {blocked ? (
+          <NoPermission
+            permission={blocked.permission!}
+            roleName={access.roleName}
+            back={{ to: `/cases/${caseId}/registration`, label: 'Back to Case Registration' }}
+          />
+        ) : (
+          <Outlet />
+        )}
       </div>
+
+      {deleting && (
+        <Suspense fallback={null}>
+          <DeleteCaseModal caseId={caseId} code={c.code} title={c.title} onClose={() => setDeleting(false)} />
+        </Suspense>
+      )}
     </div>
   )
 }
@@ -139,7 +177,7 @@ export function CaseLayout() {
  * cannot see every case. The case code is safe to name — they reached this URL
  * already — but nothing about its content is.
  */
-function NoAccess({ code, name, roleName }: { code: string; name: string; roleName: string }) {
+function NoAccess({ code, name, roleName, noView }: { code: string; name: string; roleName: string; noView: boolean }) {
   return (
     <div className="flex h-full items-center justify-center p-6">
       <div className="max-w-[420px] text-center">
@@ -148,8 +186,9 @@ function NoAccess({ code, name, roleName }: { code: string; name: string; roleNa
         </span>
         <h1 className="text-[16px] font-semibold text-ink">No access to {code}</h1>
         <p className="mt-2 text-[13px] leading-relaxed text-ink-3">
-          No active Surat Perintah on this case names {name}, and the {roleName} role does not see every case. Ask
-          whoever issues SPRINT for this investigation to add you to the order.
+          {noView
+            ? `The ${roleName} role does not have the View cases permission, so it opens no case at all. An administrator can turn it on in Admin Panel → User Setting → User Role Setting.`
+            : `No active Surat Perintah on this case names ${name}, and the ${roleName} role does not see every case. Ask whoever issues SPRINT for this investigation to add you to the order.`}
         </p>
         <Link
           to="/cases"
@@ -163,7 +202,7 @@ function NoAccess({ code, name, roleName }: { code: string; name: string; roleNa
 }
 
 /** Tab bar with a sliding indicator that tracks the active link. */
-function TabBar({ caseId, counts }: { caseId: string; counts: Counts }) {
+function TabBar({ caseId, counts, tabs }: { caseId: string; counts: Counts; tabs: typeof TABS }) {
   const listRef = useRef<HTMLDivElement>(null)
   const [indicator, setIndicator] = useState({ left: 0, width: 0, ready: false })
 
@@ -194,7 +233,7 @@ function TabBar({ caseId, counts }: { caseId: string; counts: Counts }) {
 
   return (
     <div ref={listRef} className="relative mt-4 flex gap-1 overflow-x-auto no-scrollbar">
-      {TABS.map((t) => {
+      {tabs.map((t) => {
         const count = t.count(counts)
         return (
           <NavLink

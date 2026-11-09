@@ -6,6 +6,9 @@ import { TopBar } from '@/components/layout/TopBar'
 import { CommandPalette } from '@/components/layout/CommandPalette'
 import { Toaster } from '@/components/ui/Toaster'
 import { PageSpinner } from '@/components/ui/PageSpinner'
+import { NoPermission, RequirePermission } from '@/components/access/RequirePermission'
+import { useAdminItems } from '@/components/layout/adminNav'
+import { useMe } from '@/hooks/useAccess'
 
 import { DashboardPage } from '@/pages/DashboardPage'
 import { CasesPage } from '@/pages/CasesPage'
@@ -36,7 +39,7 @@ const GelarPerkaraPage = lazy(() =>
 const CompanySettingPage = lazy(() =>
   import('@/pages/admin/CompanySettingPage').then((m) => ({ default: m.CompanySettingPage })),
 )
-const RoleSettingPage = lazy(() => import('@/pages/admin/RoleSettingPage').then((m) => ({ default: m.RoleSettingPage })))
+const UserSettingPage = lazy(() => import('@/pages/admin/UserSettingPage').then((m) => ({ default: m.UserSettingPage })))
 const TemplatePage = lazy(() => import('@/pages/admin/TemplatePage').then((m) => ({ default: m.TemplatePage })))
 const SprintTemplateEditorPage = lazy(() =>
   import('@/pages/admin/SprintTemplateEditorPage').then((m) => ({ default: m.SprintTemplateEditorPage })),
@@ -71,12 +74,29 @@ export function App() {
                 <Route path="recommendation" element={<RecommendationPage />} />
               </Route>
 
-              <Route path="/admin" element={<Navigate to="/admin/company" replace />} />
-              <Route path="/admin/company" element={<CompanySettingPage />} />
-              <Route path="/admin/roles" element={<RoleSettingPage />} />
-              <Route path="/admin/templates" element={<TemplatePage />} />
-              <Route path="/admin/templates/sprint/:templateId" element={<SprintTemplateEditorPage />} />
-              <Route path="/admin/questions" element={<QuestionsPage />} />
+              <Route path="/admin" element={<AdminLanding />} />
+              <Route
+                path="/admin/company"
+                element={<RequirePermission permission="admin.settings"><CompanySettingPage /></RequirePermission>}
+              />
+              <Route
+                path="/admin/users"
+                element={<RequirePermission permission="admin.users"><UserSettingPage /></RequirePermission>}
+              />
+              {/* The page was "User Role Setting" at /admin/roles; old links land on its roles tab. */}
+              <Route path="/admin/roles" element={<Navigate to="/admin/users?tab=roles" replace />} />
+              <Route
+                path="/admin/templates"
+                element={<RequirePermission permission="admin.settings"><TemplatePage /></RequirePermission>}
+              />
+              <Route
+                path="/admin/templates/sprint/:templateId"
+                element={<RequirePermission permission="admin.settings"><SprintTemplateEditorPage /></RequirePermission>}
+              />
+              <Route
+                path="/admin/questions"
+                element={<RequirePermission permission="admin.settings"><QuestionsPage /></RequirePermission>}
+              />
 
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
@@ -91,4 +111,13 @@ export function App() {
       <Toaster />
     </div>
   )
+}
+
+/** /admin lands on the first admin page this role may open. */
+function AdminLanding() {
+  const { ready, role } = useMe()
+  const items = useAdminItems()
+  if (!ready) return <PageSpinner />
+  if (items.length === 0) return <NoPermission permission="admin.settings" roleName={role?.name} />
+  return <Navigate to={items[0].to} replace />
 }

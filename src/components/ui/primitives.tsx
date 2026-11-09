@@ -197,6 +197,7 @@ export function Select({ options, className, ...rest }: SelectProps) {
           'appearance-none w-full h-9 rounded-lg bg-abyss/60 border border-line text-[13px] text-ink',
           'pl-3 pr-8 cursor-pointer transition-colors duration-150',
           'hover:border-line-strong focus:border-brand/70 focus:outline-none focus:ring-2 focus:ring-brand/18',
+          'disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:border-line',
           className,
         )}
         {...rest}
@@ -226,6 +227,12 @@ interface SwitchProps {
   disabled?: boolean
 }
 
+/**
+ * An ON/OFF switch that says which it is. The knob is pinned with an explicit
+ * left/top: left unset, an absolute child of a <button> takes its static
+ * position from the button's centred text, which pushed the knob off the
+ * track when on.
+ */
 export function Switch({ checked, onChange, label, disabled }: SwitchProps) {
   return (
     <button
@@ -236,16 +243,38 @@ export function Switch({ checked, onChange, label, disabled }: SwitchProps) {
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
-        'relative w-[38px] h-[22px] rounded-full shrink-0 transition-colors duration-200 ease-[var(--ease-out-quint)]',
-        'border disabled:opacity-40 disabled:pointer-events-none',
-        checked ? 'bg-brand/85 border-brand-bright/50' : 'bg-surface-3 border-line-strong',
+        'relative h-[26px] w-[54px] shrink-0 overflow-hidden rounded-full border text-left',
+        'transition-colors duration-200 ease-[var(--ease-out-quint)]',
+        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-bright',
+        'disabled:cursor-not-allowed disabled:opacity-45',
+        checked ? 'border-brand bg-brand' : 'border-line-strong bg-surface-3',
       )}
     >
       <span
+        aria-hidden
         className={cn(
-          'absolute top-1/2 -translate-y-1/2 size-[16px] rounded-full bg-white shadow-md',
+          'pointer-events-none absolute inset-y-0 flex items-center text-[9px] font-bold tracking-[0.08em] transition-opacity duration-150',
+          checked ? 'left-[8px] text-white opacity-100' : 'left-[8px] opacity-0',
+        )}
+      >
+        ON
+      </span>
+      <span
+        aria-hidden
+        className={cn(
+          'pointer-events-none absolute inset-y-0 flex items-center text-[9px] font-bold tracking-[0.08em] text-ink-3 transition-opacity duration-150',
+          checked ? 'right-[7px] opacity-0' : 'right-[7px] opacity-100',
+        )}
+      >
+        OFF
+      </span>
+      <span
+        aria-hidden
+        className={cn(
+          'pointer-events-none absolute left-[2px] top-[2px] size-[20px] rounded-full bg-white',
+          'shadow-[0_1px_3px_rgb(0_0_0/0.35)] ring-1 ring-black/5',
           'transition-transform duration-200 ease-[var(--ease-spring)]',
-          checked ? 'translate-x-[18px]' : 'translate-x-[3px]',
+          checked ? 'translate-x-[28px]' : 'translate-x-0',
         )}
       />
     </button>

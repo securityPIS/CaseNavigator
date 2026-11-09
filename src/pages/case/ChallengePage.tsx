@@ -14,6 +14,7 @@ import {
   Image as ImageIcon,
   PencilLine,
   Layers,
+  Lock,
   Play,
   Plus,
   Presentation,
@@ -29,6 +30,7 @@ import { cn, ENTITY_COLORS, uid } from '@/lib/utils'
 import { BACKGROUNDS, SLIDE_H, SLIDE_W, SlideView } from '@/components/slides/SlideView'
 import { Button, EmptyState, IconButton, Input, Select, Textarea, Tooltip } from '@/components/ui/primitives'
 import { PageSpinner } from '@/components/ui/PageSpinner'
+import { useCan } from '@/hooks/useAccess'
 import { toast } from '@/stores/toast'
 import { CaseInsertPicker, type InsertBlock } from './CaseInsertPicker'
 
@@ -60,6 +62,9 @@ export function ChallengePage() {
   const [inserting, setInserting] = useState(false)
   const [presenting, setPresenting] = useState(false)
   const [notesOpen, setNotesOpen] = useState(true)
+  // Building the deck changes the case, so it takes case.edit. Without it the
+  // deck can still be read and presented.
+  const canEdit = useCan('case.edit')
   const [scale, setScale] = useState(0.6)
   const canvasWrapRef = useRef<HTMLDivElement>(null)
 
@@ -352,7 +357,7 @@ export function ChallengePage() {
   } | null>(null)
 
   const onElementPointerDown = (e: React.PointerEvent, el: SlideElement) => {
-    if (presenting) return
+    if (presenting || !canEdit) return
     ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
     dragState.current = {
       id: el.id,
@@ -417,6 +422,7 @@ export function ChallengePage() {
         if (e.key === 'Escape') setPresenting(false)
         return
       }
+      if (!canEdit) return
 
       if (selectedEl && element?.kind === 'text' && e.key === 'Enter') {
         e.preventDefault()
@@ -446,7 +452,7 @@ export function ChallengePage() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [presenting, slides.length, selectedEl, element, deleteElement, duplicateElement, patchElement])
+  }, [presenting, canEdit, slides.length, selectedEl, element, deleteElement, duplicateElement, patchElement])
 
   useEffect(() => {
     if (!presenting) return
@@ -498,86 +504,95 @@ export function ChallengePage() {
     <div className="flex h-full flex-col">
       {/* Ribbon */}
       <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-line-soft px-4 py-2">
-        <div className="flex items-center gap-1 pr-2">
-          <AddSlideMenu onAdd={addSlide} />
-          <Tooltip label="Duplicate slide">
-            <IconButton
-              label="Duplicate slide"
-              onClick={async () => {
-                if (!slide) return
-                const index = current + 1
-                await Promise.all(
-                  slides.filter((s) => s.index >= index).map((s) => db.slides.update(s.id, { index: s.index + 1 })),
-                )
-                await db.slides.add({
-                  ...slide,
-                  id: uid('slide'),
-                  index,
-                  elements: slide.elements.map((e) => ({ ...e, id: uid('el') })),
-                })
-                setCurrent(index)
-              }}
-            >
-              <Copy size={15} />
-            </IconButton>
-          </Tooltip>
-        </div>
+        {!canEdit && (
+          <span className="flex items-center gap-1.5 rounded-md border border-line bg-abyss/40 px-2 py-1 text-[11px] text-ink-3">
+            <Lock size={11} className="shrink-0" /> Read-only — editing the deck needs the Edit cases permission.
+          </span>
+        )}
+        {canEdit && (
+          <>
+            <div className="flex items-center gap-1 pr-2">
+              <AddSlideMenu onAdd={addSlide} />
+              <Tooltip label="Duplicate slide">
+                <IconButton
+                  label="Duplicate slide"
+                  onClick={async () => {
+                    if (!slide) return
+                    const index = current + 1
+                    await Promise.all(
+                      slides.filter((s) => s.index >= index).map((s) => db.slides.update(s.id, { index: s.index + 1 })),
+                    )
+                    await db.slides.add({
+                      ...slide,
+                      id: uid('slide'),
+                      index,
+                      elements: slide.elements.map((e) => ({ ...e, id: uid('el') })),
+                    })
+                    setCurrent(index)
+                  }}
+                >
+                  <Copy size={15} />
+                </IconButton>
+              </Tooltip>
+            </div>
 
-        <span className="h-5 w-px bg-line" />
+            <span className="h-5 w-px bg-line" />
 
-        <div className="flex items-center gap-1 px-2">
-          <Tooltip label="Add text box">
-            <IconButton label="Add text" onClick={() => addElement('text')}>
-              <Type size={15} />
-            </IconButton>
-          </Tooltip>
-          <Tooltip label="Add shape">
-            <IconButton label="Add shape" onClick={() => addElement('shape')}>
-              <Square size={15} />
-            </IconButton>
-          </Tooltip>
-          <ImageButton onAdd={(src) => addElement('image', { src, w: 320, h: 200 })} />
-          <EntityMenu nodes={nodes} onAdd={(nodeId) => addElement('entity', { nodeId })} />
-        </div>
+            <div className="flex items-center gap-1 px-2">
+              <Tooltip label="Add text box">
+                <IconButton label="Add text" onClick={() => addElement('text')}>
+                  <Type size={15} />
+                </IconButton>
+              </Tooltip>
+              <Tooltip label="Add shape">
+                <IconButton label="Add shape" onClick={() => addElement('shape')}>
+                  <Square size={15} />
+                </IconButton>
+              </Tooltip>
+              <ImageButton onAdd={(src) => addElement('image', { src, w: 320, h: 200 })} />
+              <EntityMenu nodes={nodes} onAdd={(nodeId) => addElement('entity', { nodeId })} />
+            </div>
 
-        <span className="h-5 w-px bg-line" />
+            <span className="h-5 w-px bg-line" />
 
-        <div className="flex items-center px-2">
-          <Button size="sm" variant="secondary" icon={<FileInput size={13} />} onClick={() => setInserting(true)}>
-            Sisipkan dari perkara
-          </Button>
-        </div>
+            <div className="flex items-center px-2">
+              <Button size="sm" variant="secondary" icon={<FileInput size={13} />} onClick={() => setInserting(true)}>
+                Sisipkan dari perkara
+              </Button>
+            </div>
 
-        <span className="h-5 w-px bg-line" />
+            <span className="h-5 w-px bg-line" />
 
-        <div className="flex items-center gap-2 px-2">
-          <span className="text-[11px] text-ink-4">Layout</span>
-          <div className="w-[130px]">
-            <Select
-              className="h-7 text-[11.5px]"
-              value={slide?.layout ?? 'blank'}
-              onChange={(e) => slide && patchSlide(slide.id, { layout: e.target.value as SlideLayout })}
-              options={Object.entries(LAYOUT_LABELS).map(([k, v]) => ({ value: k, label: v }))}
-            />
-          </div>
+            <div className="flex items-center gap-2 px-2">
+              <span className="text-[11px] text-ink-4">Layout</span>
+              <div className="w-[130px]">
+                <Select
+                  className="h-7 text-[11.5px]"
+                  value={slide?.layout ?? 'blank'}
+                  onChange={(e) => slide && patchSlide(slide.id, { layout: e.target.value as SlideLayout })}
+                  options={Object.entries(LAYOUT_LABELS).map(([k, v]) => ({ value: k, label: v }))}
+                />
+              </div>
 
-          <span className="ml-1 text-[11px] text-ink-4">Background</span>
-          <div className="flex items-center gap-1">
-            {Object.keys(BACKGROUNDS).map((bg) => (
-              <button
-                key={bg}
-                onClick={() => slide && patchSlide(slide.id, { background: bg })}
-                aria-label={bg}
-                title={bg}
-                className={cn(
-                  'size-5 rounded-md border transition-transform hover:scale-110',
-                  slide?.background === bg ? 'border-brand-bright ring-1 ring-brand/50' : 'border-line',
-                )}
-                style={{ background: BACKGROUNDS[bg] }}
-              />
-            ))}
-          </div>
-        </div>
+              <span className="ml-1 text-[11px] text-ink-4">Background</span>
+              <div className="flex items-center gap-1">
+                {Object.keys(BACKGROUNDS).map((bg) => (
+                  <button
+                    key={bg}
+                    onClick={() => slide && patchSlide(slide.id, { background: bg })}
+                    aria-label={bg}
+                    title={bg}
+                    className={cn(
+                      'size-5 rounded-md border transition-transform hover:scale-110',
+                      slide?.background === bg ? 'border-brand-bright ring-1 ring-brand/50' : 'border-line',
+                    )}
+                    style={{ background: BACKGROUNDS[bg] }}
+                  />
+                ))}
+              </div>
+            </div>
+          </>
+        )}
 
         <div className="ml-auto flex items-center gap-1.5">
           <span className="hidden text-[11px] text-ink-4 lg:block tnum">{slides.length} slides</span>
@@ -608,40 +623,44 @@ export function ChallengePage() {
                 <span className="absolute -left-0.5 top-1 rounded bg-void/85 px-1 text-[9px] text-ink-3 tnum backdrop-blur-sm">
                   {i + 1}
                 </span>
-                <div className="absolute right-1 top-1 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                  <button
-                    onClick={() => moveSlide(i, i - 1)}
-                    disabled={i === 0}
-                    aria-label="Move slide up"
-                    className="flex size-4 items-center justify-center rounded bg-void/85 text-ink-3 backdrop-blur-sm hover:text-ink disabled:opacity-30"
-                  >
-                    <ChevronDown size={9} className="rotate-180" />
-                  </button>
-                  <button
-                    onClick={() => moveSlide(i, i + 1)}
-                    disabled={i === slides.length - 1}
-                    aria-label="Move slide down"
-                    className="flex size-4 items-center justify-center rounded bg-void/85 text-ink-3 backdrop-blur-sm hover:text-ink disabled:opacity-30"
-                  >
-                    <ChevronDown size={9} />
-                  </button>
-                  <button
-                    onClick={() => deleteSlide(s.id)}
-                    aria-label="Delete slide"
-                    className="flex size-4 items-center justify-center rounded bg-void/85 text-ink-3 backdrop-blur-sm hover:text-danger"
-                  >
-                    <X size={9} />
-                  </button>
-                </div>
+                {canEdit && (
+                  <div className="absolute right-1 top-1 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                    <button
+                      onClick={() => moveSlide(i, i - 1)}
+                      disabled={i === 0}
+                      aria-label="Move slide up"
+                      className="flex size-4 items-center justify-center rounded bg-void/85 text-ink-3 backdrop-blur-sm hover:text-ink disabled:opacity-30"
+                    >
+                      <ChevronDown size={9} className="rotate-180" />
+                    </button>
+                    <button
+                      onClick={() => moveSlide(i, i + 1)}
+                      disabled={i === slides.length - 1}
+                      aria-label="Move slide down"
+                      className="flex size-4 items-center justify-center rounded bg-void/85 text-ink-3 backdrop-blur-sm hover:text-ink disabled:opacity-30"
+                    >
+                      <ChevronDown size={9} />
+                    </button>
+                    <button
+                      onClick={() => deleteSlide(s.id)}
+                      aria-label="Delete slide"
+                      className="flex size-4 items-center justify-center rounded bg-void/85 text-ink-3 backdrop-blur-sm hover:text-danger"
+                    >
+                      <X size={9} />
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
-          <button
-            onClick={() => addSlide()}
-            className="m-2.5 flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-line-strong py-2.5 text-[11.5px] text-ink-3 transition-colors hover:border-brand/50 hover:text-brand-bright"
-          >
-            <Plus size={13} /> New slide
-          </button>
+          {canEdit && (
+            <button
+              onClick={() => addSlide()}
+              className="m-2.5 flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-line-strong py-2.5 text-[11.5px] text-ink-3 transition-colors hover:border-brand/50 hover:text-brand-bright"
+            >
+              <Plus size={13} /> New slide
+            </button>
+          )}
         </div>
 
         {/* Canvas */}
@@ -653,7 +672,7 @@ export function ChallengePage() {
                   slide={slide}
                   nodes={nodes}
                   scale={scale}
-                  interactive
+                  interactive={canEdit}
                   selectedId={selectedEl}
                   onSelectElement={setSelectedEl}
                   onElementPointerDown={onElementPointerDown}
@@ -665,7 +684,7 @@ export function ChallengePage() {
                   onCommitText={commitText}
                 />
                 {/* Resize handle for the current selection */}
-                {element && (
+                {element && canEdit && (
                   <div
                     onPointerDown={onResizePointerDown}
                     className="absolute z-10 size-3 cursor-nwse-resize rounded-sm border-2 border-brand-bright bg-void"
@@ -691,6 +710,7 @@ export function ChallengePage() {
                 rows={3}
                 placeholder="What you'll actually say. Panels read the slide; they listen to you."
                 value={slide.notes}
+                readOnly={!canEdit}
                 onChange={(e) => patchSlide(slide.id, { notes: e.target.value })}
                 className="text-[12px]"
               />
@@ -700,7 +720,15 @@ export function ChallengePage() {
 
         {/* Inspector */}
         <div className="hidden w-[228px] shrink-0 overflow-y-auto border-l border-line-soft p-3 lg:block">
-          {element ? (
+          {!canEdit ? (
+            <div className="pt-6 text-center">
+              <Lock size={20} className="mx-auto text-ink-4" />
+              <p className="mt-2.5 text-[12px] font-medium text-ink-2">Read-only deck</p>
+              <p className="mt-1.5 text-[11px] leading-relaxed text-ink-4">
+                Browse the slides and present them. Editing needs the Edit cases permission.
+              </p>
+            </div>
+          ) : element ? (
             <ElementInspector
               el={element}
               onEditText={() => setEditingEl(element.id)}
@@ -721,7 +749,7 @@ export function ChallengePage() {
         </div>
       </div>
 
-      {inserting && <CaseInsertPicker caseId={caseId} onInsert={insertBlock} onClose={() => setInserting(false)} />}
+      {inserting && canEdit && <CaseInsertPicker caseId={caseId} onInsert={insertBlock} onClose={() => setInserting(false)} />}
     </div>
   )
 }

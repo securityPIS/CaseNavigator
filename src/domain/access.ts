@@ -50,6 +50,9 @@ export function canAccessCase(
   viewerIds: string[] = [],
 ): boolean {
   if (!user || !user.active) return false
+  // case.view is the floor: without it a role opens no case, even one whose
+  // SPRINT names them or one it could otherwise see workspace-wide.
+  if (!can(role, 'case.view')) return false
   if (can(role, 'case.viewAll')) return true
   return assignedUserIds(caseSprints).has(user.id) || viewerIds.includes(user.id)
 }
@@ -60,7 +63,7 @@ export function accessReason(
   role: Role | undefined,
   caseSprints: Sprint[],
 ): 'sprint' | 'role' | 'none' {
-  if (!user || !user.active) return 'none'
+  if (!user || !user.active || !can(role, 'case.view')) return 'none'
   if (assignedUserIds(caseSprints).has(user.id)) return 'sprint'
   if (can(role, 'case.viewAll')) return 'role'
   return 'none'

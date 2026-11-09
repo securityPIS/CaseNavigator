@@ -29,6 +29,7 @@ import { LinkEdge, type LinkFlowEdge } from '@/components/graph/LinkEdge'
 import { NodeDetailPanel } from '@/components/graph/NodeDetailPanel'
 import { BoardBackground } from '@/components/graph/BoardBackground'
 import { useSession } from '@/stores/session'
+import { useCan } from '@/hooks/useAccess'
 import { EmptyState, IconButton, Input, Tooltip } from '@/components/ui/primitives'
 
 const nodeTypes = { entity: EntityNode }
@@ -47,6 +48,9 @@ function GraphCanvas() {
   const [params, setParams] = useSearchParams()
   const selectedId = params.get('node')
   const theme = useSession((s) => s.theme)
+  // Moving pins rewrites the board, so it takes case.edit; anyone on the case
+  // can still pan, zoom, search and open an entity.
+  const canEdit = useCan('case.edit')
 
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 1 })
   const [query, setQuery] = useState('')
@@ -183,12 +187,12 @@ function GraphCanvas() {
     (changes: NodeChange<EntityFlowNode>[]) => {
       onNodesChangeInternal(changes)
       for (const ch of changes) {
-        if (ch.type === 'position' && ch.position && !ch.dragging) {
+        if (canEdit && ch.type === 'position' && ch.position && !ch.dragging) {
           db.nodes.update(ch.id, { x: ch.position.x, y: ch.position.y })
         }
       }
     },
-    [onNodesChangeInternal],
+    [onNodesChangeInternal, canEdit],
   )
 
   /**
@@ -272,6 +276,7 @@ function GraphCanvas() {
           maxZoom={2.2}
           proOptions={{ hideAttribution: true }}
           nodesConnectable={false}
+          nodesDraggable={canEdit}
           elementsSelectable
           className="relative z-1"
           defaultEdgeOptions={{ type: 'link' }}

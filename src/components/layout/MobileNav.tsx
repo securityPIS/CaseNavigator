@@ -2,6 +2,7 @@ import { NavLink, useLocation } from 'react-router-dom'
 import { FolderKanban, LayoutDashboard, Search, ShieldCheck } from 'lucide-react'
 import { useApp } from '@/stores/app'
 import { cn } from '@/lib/utils'
+import { useAdminItems } from './adminNav'
 
 /**
  * Fixed bottom navigation for phones. The sidebar is hidden below `md`, so this
@@ -15,6 +16,7 @@ export function MobileNav() {
   const setCommandOpen = useApp((s) => s.setCommandOpen)
   const { pathname } = useLocation()
   const onAdmin = pathname.startsWith('/admin')
+  const adminItems = useAdminItems()
 
   return (
     <nav
@@ -34,7 +36,7 @@ export function MobileNav() {
         <span>Search</span>
       </button>
 
-      <NavItem to="/admin" icon={ShieldCheck} label="Admin" active={onAdmin} />
+      {adminItems.length > 0 && <NavItem to={adminItems[0].to} icon={ShieldCheck} label="Admin" active={onAdmin} />}
     </nav>
   )
 }

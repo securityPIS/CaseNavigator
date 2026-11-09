@@ -1,17 +1,8 @@
 import type { ReactNode } from 'react'
 import { NavLink } from 'react-router-dom'
-import { Building2, HelpCircle, LayoutTemplate, Users } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { SectionHeading } from '@/components/ui/primitives'
-
-/** The admin destinations — surfaced here on phones, where the sidebar
-    (which normally carries them) is hidden behind the bottom nav. */
-const ADMIN_NAV = [
-  { to: '/admin/company', label: 'Company', icon: Building2 },
-  { to: '/admin/roles', label: 'Roles', icon: Users },
-  { to: '/admin/templates', label: 'Templates', icon: LayoutTemplate },
-  { to: '/admin/questions', label: 'Questions', icon: HelpCircle },
-]
+import { useAdminItems } from '@/components/layout/adminNav'
 
 /** Shared chrome for the four admin pages so they read as one panel. */
 export function AdminShell({
@@ -25,6 +16,10 @@ export function AdminShell({
   actions?: ReactNode
   children: ReactNode
 }) {
+  // The admin destinations — surfaced here on phones, where the sidebar (which
+  // normally carries them) is hidden behind the bottom nav.
+  const adminNav = useAdminItems()
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-[1080px] px-6 py-7 lg:px-8">
@@ -39,7 +34,7 @@ export function AdminShell({
 
         {/* Admin section switcher — phones only; the sidebar handles md and up. */}
         <nav className="mb-6 -mx-6 flex gap-2 overflow-x-auto px-6 no-scrollbar md:hidden" aria-label="Admin sections">
-          {ADMIN_NAV.map((it) => (
+          {adminNav.map((it) => (
             <NavLink
               key={it.to}
               to={it.to}
@@ -53,7 +48,7 @@ export function AdminShell({
               }
             >
               <it.icon size={15} className="shrink-0" />
-              {it.label}
+              {it.short}
             </NavLink>
           ))}
         </nav>

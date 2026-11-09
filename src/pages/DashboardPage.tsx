@@ -14,7 +14,7 @@ import {
   TrendingUp,
 } from 'lucide-react'
 import { db } from '@/domain/db'
-import { useVisibleCases } from '@/hooks/useAccess'
+import { usePermissions, useVisibleCases } from '@/hooks/useAccess'
 import { useSession } from '@/stores/session'
 import type { Case } from '@/domain/types'
 import {
@@ -44,7 +44,12 @@ export function DashboardPage() {
   // The dashboard aggregates across cases, so each source is cut to the cases
   // this user can open — otherwise the totals would count work they cannot see.
   const nodes = useMemo(() => allNodes.filter((n) => caseIds.has(n.caseId)), [allNodes, caseIds])
-  const evidence = useMemo(() => allEvidence.filter((e) => caseIds.has(e.caseId)), [allEvidence, caseIds])
+  // Evidence and reports also need their own view permission, like their tabs.
+  const perms = usePermissions('evidence.view', 'report.view')
+  const evidence = useMemo(
+    () => (perms['evidence.view'] ? allEvidence.filter((e) => caseIds.has(e.caseId)) : []),
+    [allEvidence, caseIds, perms['evidence.view']],
+  )
   const mails = useMemo(() => allMails.filter((m) => caseIds.has(m.caseId)), [allMails, caseIds])
   const activities = useMemo(
     () => allActivities.filter((a) => !a.caseId || caseIds.has(a.caseId)).slice(0, 9),
@@ -126,7 +131,7 @@ export function DashboardPage() {
         </header>
 
         {/* Stats */}
-        <div className="mb-6 grid grid-cols-2 gap-3.5 lg:grid-cols-4">
+        <div className={cn('mb-6 grid grid-cols-2 gap-3.5', perms['evidence.view'] ? 'lg:grid-cols-4' : 'lg:grid-cols-3')}>
           <StatCard
             icon={FolderKanban}
             label="Open Cases"
@@ -143,14 +148,16 @@ export function DashboardPage() {
             color="#A855F7"
             i={1}
           />
-          <StatCard
-            icon={Boxes}
-            label="Evidence Items"
-            value={evidence.length}
-            sub={`${pendingEvidence} awaiting review`}
-            color="#10B981"
-            i={2}
-          />
+          {perms['evidence.view'] && (
+            <StatCard
+              icon={Boxes}
+              label="Evidence Items"
+              value={evidence.length}
+              sub={`${pendingEvidence} awaiting review`}
+              color="#10B981"
+              i={2}
+            />
+          )}
           <StatCard
             icon={Mail}
             label="Unread Mail"
@@ -286,24 +293,27 @@ export function DashboardPage() {
               <SectionHeading>Quick Access</SectionHeading>
               <div className="grid grid-cols-2 gap-2.5">
                 {[
-                  { to: '/cases/c-014/graph', icon: Shapes, label: 'Board', sub: 'CN-2026-014' },
-                  { to: '/cases/c-014/evidence', icon: Boxes, label: 'Evidence', sub: '12 items' },
-                  { to: '/cases/c-014/report', icon: FileText, label: 'Report', sub: 'Draft' },
-                  { to: '/cases/c-014/recommendation', icon: TrendingUp, label: 'Recommendations', sub: '12 actions' },
-                ].map((q) => (
-                  <Link
-                    key={q.to}
-                    to={q.to}
-                    className="group glass rounded-xl p-3.5 transition-all duration-200 hover:border-brand/40 hover:bg-brand/6"
-                  >
-                    <div className="mb-2 flex items-center justify-between">
-                      <q.icon size={16} className="text-ink-3 transition-colors group-hover:text-brand-bright" />
-                      <ArrowUpRight size={13} className="text-ink-4 opacity-0 transition-opacity group-hover:opacity-100" />
-                    </div>
-                    <p className="text-[12.5px] font-medium text-ink">{q.label}</p>
-                    <p className="mt-0.5 text-[10.5px] text-ink-4">{q.sub}</p>
-                  </Link>
-                ))}
+                  { to: '/cases/c-014/graph', icon: Shapes, label: 'Board', sub: 'CN-2026-014', show: true },
+                  { to: '/cases/c-014/evidence', icon: Boxes, label: 'Evidence', sub: '12 items', show: perms['evidence.view'] },
+                  { to: '/cases/c-014/report', icon: FileText, label: 'Report', sub: 'Draft', show: perms['report.view'] },
+                  { to: '/cases/c-014/recommendation', icon: TrendingUp, label: 'Recommendations', sub: '12 actions', show: true },
+                ]
+                  // Shortcuts into CN-2026-014 only for someone who can open it.
+                  .filter((q) => q.show && caseIds.has('c-014'))
+                  .map((q) => (
+                    <Link
+                      key={q.to}
+                      to={q.to}
+                      className="group glass rounded-xl p-3.5 transition-all duration-200 hover:border-brand/40 hover:bg-brand/6"
+                    >
+                      <div className="mb-2 flex items-center justify-between">
+                        <q.icon size={16} className="text-ink-3 transition-colors group-hover:text-brand-bright" />
+                        <ArrowUpRight size={13} className="text-ink-4 opacity-0 transition-opacity group-hover:opacity-100" />
+                      </div>
+                      <p className="text-[12.5px] font-medium text-ink">{q.label}</p>
+                      <p className="mt-0.5 text-[10.5px] text-ink-4">{q.sub}</p>
+                    </Link>
+                  ))}
               </div>
             </section>
           </div>
