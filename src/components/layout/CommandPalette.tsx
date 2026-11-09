@@ -2,22 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
-import {
-  Building2,
-  CornerDownLeft,
-  FileText,
-  FolderKanban,
-  HelpCircle,
-  LayoutDashboard,
-  LayoutTemplate,
-  Mail,
-  Search,
-  Shapes,
-  Users,
-} from 'lucide-react'
+import { CornerDownLeft, FileText, FolderKanban, LayoutDashboard, Mail, Search, Shapes } from 'lucide-react'
 import { db } from '@/domain/db'
 import { useApp } from '@/stores/app'
-import { useVisibleCases } from '@/hooks/useAccess'
+import { usePermissions, useVisibleCases } from '@/hooks/useAccess'
+import { useAdminItems } from './adminNav'
 import { cn, ENTITY_COLORS, ENTITY_LABELS, splitHighlight } from '@/lib/utils'
 import { Kbd, tone } from '@/components/ui/primitives'
 
@@ -52,16 +41,26 @@ export function CommandPalette() {
   const allEvidence = useLiveQuery(() => db.evidence.toArray(), [], [])
   const nodes = useMemo(() => allNodes.filter((n) => caseIds.has(n.caseId)), [allNodes, caseIds])
   const mails = useMemo(() => allMails.filter((m) => caseIds.has(m.caseId)), [allMails, caseIds])
-  const evidence = useMemo(() => allEvidence.filter((e) => caseIds.has(e.caseId)), [allEvidence, caseIds])
+  // Evidence is searchable only by roles that may open the register.
+  const perms = usePermissions('evidence.view')
+  const evidence = useMemo(
+    () => (perms['evidence.view'] ? allEvidence.filter((e) => caseIds.has(e.caseId)) : []),
+    [allEvidence, caseIds, perms['evidence.view']],
+  )
+  const adminItems = useAdminItems()
 
   const items = useMemo<Item[]>(() => {
     const nav: Item[] = [
       { id: 'nav-dash', title: 'Dashboard', subtitle: 'Overview and activity', group: 'Navigate', to: '/', icon: LayoutDashboard },
       { id: 'nav-cases', title: 'Cases', subtitle: 'All investigations', group: 'Navigate', to: '/cases', icon: FolderKanban },
-      { id: 'nav-company', title: 'Company Setting', subtitle: 'Admin Panel', group: 'Navigate', to: '/admin/company', icon: Building2 },
-      { id: 'nav-roles', title: 'User Role Setting', subtitle: 'Admin Panel', group: 'Navigate', to: '/admin/roles', icon: Users },
-      { id: 'nav-templates', title: 'Template Customization', subtitle: 'Admin Panel', group: 'Navigate', to: '/admin/templates', icon: LayoutTemplate },
-      { id: 'nav-questions', title: 'Questions Customization', subtitle: 'Admin Panel', group: 'Navigate', to: '/admin/questions', icon: HelpCircle },
+      ...adminItems.map((it) => ({
+        id: `nav-${it.to}`,
+        title: it.label,
+        subtitle: 'Admin Panel',
+        group: 'Navigate',
+        to: it.to,
+        icon: it.icon,
+      })),
     ]
     const caseItems: Item[] = cases.map((c) => ({
       id: `case-${c.id}`,
@@ -97,7 +96,7 @@ export function CommandPalette() {
       icon: FileText,
     }))
     return [...nav, ...caseItems, ...nodeItems, ...mailItems, ...evItems]
-  }, [cases, nodes, mails, evidence])
+  }, [cases, nodes, mails, evidence, adminItems])
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase()

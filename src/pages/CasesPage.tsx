@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
@@ -16,13 +16,16 @@ import {
   SlidersHorizontal,
 } from 'lucide-react'
 import { db } from '@/domain/db'
-import { can } from '@/domain/access'
 import type { Case, CasePriority, CaseStatus } from '@/domain/types'
 import { cn, daysUntil, formatDate, formatDateTime, PRIORITY_META, relativeTime, STATUS_META } from '@/lib/utils'
 import { Avatar, Badge, Button, Card, EmptyState, Input, Select, tone } from '@/components/ui/primitives'
-import { useVisibleCases } from '@/hooks/useAccess'
-import { useSession } from '@/stores/session'
-import { SprintLetterModal } from '@/pages/case/SprintLetterModal'
+import { usePermissions, useVisibleCases } from '@/hooks/useAccess'
+
+// The SPRINT form opens only for roles that may create a case, so it loads on
+// demand rather than riding in the first-paint bundle for everyone.
+const SprintLetterModal = lazy(() =>
+  import('@/pages/case/SprintLetterModal').then((m) => ({ default: m.SprintLetterModal })),
+)
 
 type View = 'grid' | 'table'
 
@@ -37,11 +40,10 @@ export function CasesPage() {
   const cases = useVisibleCases() ?? []
   const users = useLiveQuery(() => db.users.toArray(), [], [])
   const roles = useLiveQuery(() => db.roles.toArray(), [], [])
-  const userId = useSession((s) => s.userId)
   const navigate = useNavigate()
-  const myRole = roles.find((r) => r.id === users.find((u) => u.id === userId)?.role)
   // A case begins with its SPRINT, so opening one takes both rights.
-  const canOpen = can(myRole, 'case.create') && can(myRole, 'sprint.manage')
+  const perms = usePermissions('case.create', 'sprint.manage')
+  const canOpen = perms['case.create'] && perms['sprint.manage']
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -207,13 +209,15 @@ export function CasesPage() {
         )}
       </div>
 
-      {newOpen && (
-        <SprintLetterModal
-          users={users}
-          roles={roles}
-          onClose={() => setNewOpen(false)}
-          onSaved={(sprintId, caseId) => navigate(`/cases/${caseId}/registration?sprint=${sprintId}`)}
-        />
+      {newOpen && canOpen && (
+        <Suspense fallback={null}>
+          <SprintLetterModal
+            users={users}
+            roles={roles}
+            onClose={() => setNewOpen(false)}
+            onSaved={(sprintId, caseId) => navigate(`/cases/${caseId}/registration?sprint=${sprintId}`)}
+          />
+        </Suspense>
       )}
     </div>
   )

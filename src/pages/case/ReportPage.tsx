@@ -9,6 +9,7 @@ import {
   Heading1,
   Heading2,
   Italic,
+  Lock,
   List,
   ListOrdered,
   Plus,
@@ -24,6 +25,7 @@ import type { Report, ReportSection } from '@/domain/types'
 import { cn, formatDateTime, relativeTime, uid } from '@/lib/utils'
 import { Badge, Button, EmptyState, IconButton, Select, Tooltip } from '@/components/ui/primitives'
 import { PageSpinner } from '@/components/ui/PageSpinner'
+import { usePermissions } from '@/hooks/useAccess'
 import { toast } from '@/stores/toast'
 
 const CLASSIFICATIONS: Record<Report['classification'], { label: string; color: string }> = {
@@ -44,6 +46,7 @@ export function ReportPage() {
   const report = useLiveQuery(() => db.reports.where('caseId').equals(caseId).first(), [caseId])
   const caseRec = useLiveQuery(() => db.cases.get(caseId), [caseId])
 
+  const { 'report.edit': mayEdit, 'report.publish': mayPublish } = usePermissions('report.edit', 'report.publish')
   const [activeSection, setActiveSection] = useState<string | null>(null)
   const [saving, setSaving] = useState<'idle' | 'saving' | 'saved'>('idle')
   const savedTimer = useRef<number | null>(null)
@@ -51,13 +54,17 @@ export function ReportPage() {
   const touch = useCallback(
     async (patch: Partial<Report>) => {
       if (!report) return
+      // Content edits need report.edit on a report that is not final; a status
+      // change is checked by its own control.
+      const statusOnly = Object.keys(patch).every((k) => k === 'status')
+      if (!statusOnly && (!mayEdit || report.status === 'final')) return
       setSaving('saving')
       await db.reports.update(report.id, { ...patch, updatedAt: new Date().toISOString() })
       setSaving('saved')
       if (savedTimer.current) window.clearTimeout(savedTimer.current)
       savedTimer.current = window.setTimeout(() => setSaving('idle'), 1600)
     },
-    [report],
+    [report, mayEdit],
   )
 
   useEffect(() => () => void (savedTimer.current && window.clearTimeout(savedTimer.current)), [])
@@ -102,81 +109,108 @@ export function ReportPage() {
 
   const classification = CLASSIFICATIONS[report.classification]
   const status = STATUS[report.status]
+  const isFinal = report.status === 'final'
+  /** Writing needs report.edit; a final report is locked until moved back. */
+  const editable = mayEdit && !isFinal
+  /** Final is reached, and left, only with report.publish. */
+  const statusEditable = isFinal ? mayPublish : mayEdit || mayPublish
+  const statusOptions = Object.entries(STATUS)
+    .filter(([k]) => mayPublish || k !== 'final' || isFinal)
+    .map(([k, v]) => ({ value: k, label: v.label }))
+  const lockNote = isFinal
+    ? mayPublish
+      ? 'Final — locked. Move it back to Draft to edit.'
+      : 'Final — published and locked.'
+    : !mayEdit
+      ? 'Read-only — editing needs the Edit reports permission.'
+      : null
 
   return (
     <div className="flex h-full flex-col">
       {/* Ribbon */}
       <div className="no-print flex shrink-0 flex-wrap items-center gap-1.5 border-b border-line-soft px-4 py-2">
-        <div className="flex items-center gap-0.5 pr-2">
-          <Tooltip label="Undo">
-            <IconButton label="Undo" onClick={() => exec('undo')}>
-              <Undo2 size={14} />
-            </IconButton>
-          </Tooltip>
-          <Tooltip label="Redo">
-            <IconButton label="Redo" onClick={() => exec('redo')}>
-              <Redo2 size={14} />
-            </IconButton>
-          </Tooltip>
-        </div>
+        {editable && (
+          <>
+            <div className="flex items-center gap-0.5 pr-2">
+              <Tooltip label="Undo">
+                <IconButton label="Undo" onClick={() => exec('undo')}>
+                  <Undo2 size={14} />
+                </IconButton>
+              </Tooltip>
+              <Tooltip label="Redo">
+                <IconButton label="Redo" onClick={() => exec('redo')}>
+                  <Redo2 size={14} />
+                </IconButton>
+              </Tooltip>
+            </div>
 
-        <span className="h-5 w-px bg-line" />
+            <span className="h-5 w-px bg-line" />
 
-        <div className="flex items-center gap-0.5 px-2">
-          <Tooltip label="Bold (⌘B)">
-            <IconButton label="Bold" onClick={() => exec('bold')}>
-              <Bold size={14} />
-            </IconButton>
-          </Tooltip>
-          <Tooltip label="Italic (⌘I)">
-            <IconButton label="Italic" onClick={() => exec('italic')}>
-              <Italic size={14} />
-            </IconButton>
-          </Tooltip>
-          <Tooltip label="Underline (⌘U)">
-            <IconButton label="Underline" onClick={() => exec('underline')}>
-              <Underline size={14} />
-            </IconButton>
-          </Tooltip>
-        </div>
+            <div className="flex items-center gap-0.5 px-2">
+              <Tooltip label="Bold (⌘B)">
+                <IconButton label="Bold" onClick={() => exec('bold')}>
+                  <Bold size={14} />
+                </IconButton>
+              </Tooltip>
+              <Tooltip label="Italic (⌘I)">
+                <IconButton label="Italic" onClick={() => exec('italic')}>
+                  <Italic size={14} />
+                </IconButton>
+              </Tooltip>
+              <Tooltip label="Underline (⌘U)">
+                <IconButton label="Underline" onClick={() => exec('underline')}>
+                  <Underline size={14} />
+                </IconButton>
+              </Tooltip>
+            </div>
 
-        <span className="h-5 w-px bg-line" />
+            <span className="h-5 w-px bg-line" />
 
-        <div className="flex items-center gap-0.5 px-2">
-          <Tooltip label="Heading 1">
-            <IconButton label="Heading 1" onClick={() => exec('formatBlock', '<h3>')}>
-              <Heading1 size={14} />
-            </IconButton>
-          </Tooltip>
-          <Tooltip label="Heading 2">
-            <IconButton label="Heading 2" onClick={() => exec('formatBlock', '<h4>')}>
-              <Heading2 size={14} />
-            </IconButton>
-          </Tooltip>
-          <Tooltip label="Paragraph">
-            <IconButton label="Paragraph" onClick={() => exec('formatBlock', '<p>')}>
-              <span className="text-[11px] font-semibold">P</span>
-            </IconButton>
-          </Tooltip>
-          <Tooltip label="Bulleted list">
-            <IconButton label="Bulleted list" onClick={() => exec('insertUnorderedList')}>
-              <List size={14} />
-            </IconButton>
-          </Tooltip>
-          <Tooltip label="Numbered list">
-            <IconButton label="Numbered list" onClick={() => exec('insertOrderedList')}>
-              <ListOrdered size={14} />
-            </IconButton>
-          </Tooltip>
-        </div>
+            <div className="flex items-center gap-0.5 px-2">
+              <Tooltip label="Heading 1">
+                <IconButton label="Heading 1" onClick={() => exec('formatBlock', '<h3>')}>
+                  <Heading1 size={14} />
+                </IconButton>
+              </Tooltip>
+              <Tooltip label="Heading 2">
+                <IconButton label="Heading 2" onClick={() => exec('formatBlock', '<h4>')}>
+                  <Heading2 size={14} />
+                </IconButton>
+              </Tooltip>
+              <Tooltip label="Paragraph">
+                <IconButton label="Paragraph" onClick={() => exec('formatBlock', '<p>')}>
+                  <span className="text-[11px] font-semibold">P</span>
+                </IconButton>
+              </Tooltip>
+              <Tooltip label="Bulleted list">
+                <IconButton label="Bulleted list" onClick={() => exec('insertUnorderedList')}>
+                  <List size={14} />
+                </IconButton>
+              </Tooltip>
+              <Tooltip label="Numbered list">
+                <IconButton label="Numbered list" onClick={() => exec('insertOrderedList')}>
+                  <ListOrdered size={14} />
+                </IconButton>
+              </Tooltip>
+            </div>
 
-        <span className="h-5 w-px bg-line" />
+            <span className="h-5 w-px bg-line" />
+          </>
+        )}
+
+        {lockNote && (
+          <span className="mr-1 flex items-center gap-1.5 rounded-md border border-line bg-abyss/40 px-2 py-1 text-[11px] text-ink-3">
+            <Lock size={11} className="shrink-0" /> {lockNote}
+          </span>
+        )}
 
         <div className="flex items-center gap-2 px-2">
           <div className="w-[128px]">
             <Select
               className="h-7 text-[11.5px]"
               value={report.classification}
+              disabled={!editable}
+              aria-label="Classification"
               onChange={(e) => touch({ classification: e.target.value as Report['classification'] })}
               options={Object.entries(CLASSIFICATIONS).map(([k, v]) => ({ value: k, label: v.label }))}
             />
@@ -185,8 +219,15 @@ export function ReportPage() {
             <Select
               className="h-7 text-[11.5px]"
               value={report.status}
-              onChange={(e) => touch({ status: e.target.value as Report['status'] })}
-              options={Object.entries(STATUS).map(([k, v]) => ({ value: k, label: v.label }))}
+              disabled={!statusEditable}
+              aria-label="Report status"
+              onChange={(e) => {
+                const next = e.target.value as Report['status']
+                if ((next === 'final' || isFinal) && !mayPublish) return
+                void touch({ status: next })
+                if (next === 'final') toast.success('Report published', 'It is final and locked against edits.')
+              }}
+              options={statusOptions}
             />
           </div>
         </div>
@@ -228,12 +269,14 @@ export function ReportPage() {
             ))}
           </ul>
 
-          <button
-            onClick={addSection}
-            className="mt-2.5 flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-line-strong py-2 text-[11px] text-ink-3 transition-colors hover:border-brand/50 hover:text-brand-bright"
-          >
-            <Plus size={12} /> Add section
-          </button>
+          {editable && (
+            <button
+              onClick={addSection}
+              className="mt-2.5 flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-line-strong py-2 text-[11px] text-ink-3 transition-colors hover:border-brand/50 hover:text-brand-bright"
+            >
+              <Plus size={12} /> Add section
+            </button>
+          )}
 
           <div className="mt-auto space-y-1.5 rounded-xl border border-line-soft bg-abyss/35 p-3">
             <Row label="Author" value={report.author} />
@@ -273,6 +316,7 @@ export function ReportPage() {
 
                 <input
                   value={report.title}
+                  readOnly={!editable}
                   onChange={(e) => touch({ title: e.target.value })}
                   className="mt-5 w-full border-none bg-transparent p-0 font-serif text-[27px] font-bold leading-tight text-[#0F172A] outline-none focus:bg-[#1D4ED8]/6"
                   aria-label="Report title"
@@ -300,6 +344,7 @@ export function ReportPage() {
                   key={s.id}
                   section={s}
                   index={i}
+                  editable={editable}
                   onFocus={() => setActiveSection(s.id)}
                   onPatch={(p) => patchSection(s.id, p)}
                   onRemove={() => removeSection(s.id)}
@@ -317,7 +362,7 @@ export function ReportPage() {
             </article>
 
             <p className="no-print mt-4 text-center text-[10.5px] text-ink-4">
-              Click any paragraph to edit. Changes save to your browser automatically.
+              {editable ? 'Click any paragraph to edit. Changes save to your browser automatically.' : lockNote}
             </p>
           </div>
         </div>
@@ -331,12 +376,14 @@ export function ReportPage() {
 function SectionEditor({
   section,
   index,
+  editable,
   onFocus,
   onPatch,
   onRemove,
 }: {
   section: ReportSection
   index: number
+  editable: boolean
   onFocus: () => void
   onPatch: (p: Partial<ReportSection>) => void
   onRemove: () => void
@@ -353,26 +400,29 @@ function SectionEditor({
 
   return (
     <section id={`sec-${section.id}`} className="group/sec relative mb-7 scroll-mt-6">
-      <div className="absolute -left-11 top-1 flex flex-col gap-1 opacity-0 transition-opacity group-hover/sec:opacity-100 no-print">
-        <button
-          onClick={onRemove}
-          aria-label="Delete section"
-          className="flex size-6 items-center justify-center rounded-md border border-[#E5E7EB] bg-white text-[#9CA3AF] transition-colors hover:border-red-300 hover:text-red-500"
-        >
-          <Trash2 size={11} />
-        </button>
-        <button
-          onClick={() => onPatch({ level: section.level === 1 ? 2 : 1 })}
-          aria-label="Toggle heading level"
-          title={section.level === 1 ? 'Demote to sub-heading' : 'Promote to heading'}
-          className="flex size-6 items-center justify-center rounded-md border border-[#E5E7EB] bg-white text-[9px] font-bold text-[#9CA3AF] transition-colors hover:border-[#1D4ED8] hover:text-[#1D4ED8]"
-        >
-          H{section.level}
-        </button>
-      </div>
+      {editable && (
+        <div className="absolute -left-11 top-1 flex flex-col gap-1 opacity-0 transition-opacity group-hover/sec:opacity-100 no-print">
+          <button
+            onClick={onRemove}
+            aria-label="Delete section"
+            className="flex size-6 items-center justify-center rounded-md border border-[#E5E7EB] bg-white text-[#9CA3AF] transition-colors hover:border-red-300 hover:text-red-500"
+          >
+            <Trash2 size={11} />
+          </button>
+          <button
+            onClick={() => onPatch({ level: section.level === 1 ? 2 : 1 })}
+            aria-label="Toggle heading level"
+            title={section.level === 1 ? 'Demote to sub-heading' : 'Promote to heading'}
+            className="flex size-6 items-center justify-center rounded-md border border-[#E5E7EB] bg-white text-[9px] font-bold text-[#9CA3AF] transition-colors hover:border-[#1D4ED8] hover:text-[#1D4ED8]"
+          >
+            H{section.level}
+          </button>
+        </div>
+      )}
 
       <input
         value={section.heading}
+        readOnly={!editable}
         onFocus={onFocus}
         onChange={(e) => onPatch({ heading: e.target.value })}
         aria-label={`Section ${index + 1} heading`}
@@ -384,10 +434,10 @@ function SectionEditor({
 
       <div
         ref={bodyRef}
-        contentEditable
+        contentEditable={editable}
         suppressContentEditableWarning
         onFocus={onFocus}
-        onBlur={(e) => onPatch({ html: e.currentTarget.innerHTML })}
+        onBlur={(e) => editable && onPatch({ html: e.currentTarget.innerHTML })}
         className="report-body text-[12.5px] leading-[1.85] text-[#1F2937] outline-none focus:bg-[#1D4ED8]/4"
       />
     </section>

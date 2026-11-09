@@ -22,6 +22,7 @@ import { cn, daysUntil, ENTITY_COLORS, PRIORITY_META, uid } from '@/lib/utils'
 import { Avatar, Button, IconButton, Input, Select, Textarea, tone } from '@/components/ui/primitives'
 import { Modal } from '@/components/ui/Modal'
 import { Field } from '@/pages/CasesPage'
+import { useCan, useMe } from '@/hooks/useAccess'
 import { toast } from '@/stores/toast'
 
 const COLUMNS: { id: RecColumn; label: string; color: string; hint: string }[] = [
@@ -39,6 +40,10 @@ export function RecommendationPage() {
   const [dragging, setDragging] = useState<Recommendation | null>(null)
   const [editing, setEditing] = useState<Recommendation | null>(null)
   const [creating, setCreating] = useState<RecColumn | null>(null)
+  // Adding, moving and editing actions changes the case: case.edit. Without it
+  // the board is read-only and a card opens its details without a Save.
+  const canEdit = useCan('case.edit')
+  const { me } = useMe()
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -60,7 +65,7 @@ export function RecommendationPage() {
   const onDragEnd = async (e: DragEndEvent) => {
     setDragging(null)
     const { active, over } = e
-    if (!over) return
+    if (!over || !canEdit) return
 
     const activeRec = recs.find((r) => r.id === active.id)
     if (!activeRec) return
@@ -84,7 +89,7 @@ export function RecommendationPage() {
       await db.activities.add({
         id: uid('ac'),
         caseId,
-        actorId: 'u-jason',
+        actorId: me?.id ?? 'unknown',
         verb: 'moved',
         object: `“${activeRec.title}” to ${COLUMNS.find((c) => c.id === targetCol)!.label}`,
         at: new Date().toISOString(),
@@ -118,9 +123,11 @@ export function RecommendationPage() {
             </div>
           )}
 
-          <Button size="sm" variant="primary" icon={<Plus size={13} />} className="ml-auto" onClick={() => setCreating('open')}>
-            New action
-          </Button>
+          {canEdit && (
+            <Button size="sm" variant="primary" icon={<Plus size={13} />} className="ml-auto" onClick={() => setCreating('open')}>
+              New action
+            </Button>
+          )}
         </div>
       </div>
 
@@ -135,6 +142,7 @@ export function RecommendationPage() {
                 items={byColumn.get(col.id) ?? []}
                 users={users}
                 nodes={nodes}
+                editable={canEdit}
                 onAdd={() => setCreating(col.id)}
                 onOpen={setEditing}
               />
@@ -156,8 +164,10 @@ export function RecommendationPage() {
           rec={editing}
           users={users}
           nodes={nodes}
+          editable={canEdit}
           onClose={() => setEditing(null)}
           onDelete={async () => {
+            if (!canEdit) return
             await db.recommendations.delete(editing.id)
             toast.success('Action deleted', `“${editing.title}” was removed.`)
             setEditing(null)
@@ -165,7 +175,7 @@ export function RecommendationPage() {
         />
       )}
 
-      {creating && (
+      {creating && canEdit && (
         <CreateModal
           caseId={caseId}
           column={creating}
@@ -186,6 +196,7 @@ function Column({
   items,
   users,
   nodes,
+  editable,
   onAdd,
   onOpen,
 }: {
@@ -193,6 +204,7 @@ function Column({
   items: Recommendation[]
   users: User[]
   nodes: GraphNode[]
+  editable: boolean
   onAdd: () => void
   onOpen: (r: Recommendation) => void
 }) {
@@ -204,9 +216,11 @@ function Column({
         <span className="size-2 shrink-0 rounded-full" style={{ background: col.color, boxShadow: `0 0 7px ${col.color}` }} />
         <h3 className="text-[12px] font-semibold text-ink">{col.label}</h3>
         <span className="rounded-full bg-surface-3 px-1.5 py-px text-[10px] font-medium text-ink-3 tnum">{items.length}</span>
-        <IconButton label={`Add to ${col.label}`} size={22} className="ml-auto" onClick={onAdd}>
-          <Plus size={12} />
-        </IconButton>
+        {editable && (
+          <IconButton label={`Add to ${col.label}`} size={22} className="ml-auto" onClick={onAdd}>
+            <Plus size={12} />
+          </IconButton>
+        )}
       </div>
 
       <div
@@ -218,7 +232,7 @@ function Column({
       >
         <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
           {items.map((r) => (
-            <SortableCard key={r.id} rec={r} users={users} nodes={nodes} onOpen={() => onOpen(r)} />
+            <SortableCard key={r.id} rec={r} users={users} nodes={nodes} draggable={editable} onOpen={() => onOpen(r)} />
           ))}
         </SortableContext>
 
@@ -238,14 +252,16 @@ function SortableCard({
   rec,
   users,
   nodes,
+  draggable,
   onOpen,
 }: {
   rec: Recommendation
   users: User[]
   nodes: GraphNode[]
+  draggable: boolean
   onOpen: () => void
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: rec.id })
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: rec.id, disabled: !draggable })
 
   return (
     <div
@@ -253,7 +269,7 @@ function SortableCard({
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={cn(isDragging && 'opacity-35')}
     >
-      <CardBody rec={rec} users={users} nodes={nodes} onOpen={onOpen} dragHandle={{ ...attributes, ...listeners }} />
+      <CardBody rec={rec} users={users} nodes={nodes} onOpen={onOpen} dragHandle={draggable ? { ...attributes, ...listeners } : undefined} />
     </div>
   )
 }
@@ -365,12 +381,14 @@ function EditModal({
   rec,
   users,
   nodes,
+  editable,
   onClose,
   onDelete,
 }: {
   rec: Recommendation
   users: User[]
   nodes: GraphNode[]
+  editable: boolean
   onClose: () => void
   onDelete: () => void
 }) {
@@ -383,6 +401,7 @@ function EditModal({
   const [linkIds, setLinkIds] = useState(rec.linkedNodeIds)
 
   const save = async () => {
+    if (!editable) return
     await db.recommendations.update(rec.id, {
       title: title.trim() || rec.title,
       detail: detail.trim(),
@@ -400,26 +419,36 @@ function EditModal({
     <Modal
       open
       onClose={onClose}
-      title="Edit action"
+      title={editable ? 'Edit action' : 'Action'}
+      description={editable ? undefined : 'Read-only — changing actions needs the Edit cases permission.'}
       size="md"
       footer={
-        <>
-          <Button variant="danger" icon={<Trash2 size={13} />} onClick={onDelete}>
-            Delete
-          </Button>
-          <div className="flex-1" />
+        editable ? (
+          <>
+            <Button variant="danger" icon={<Trash2 size={13} />} onClick={onDelete}>
+              Delete
+            </Button>
+            <div className="flex-1" />
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={save}>
+              Save changes
+            </Button>
+          </>
+        ) : (
           <Button variant="ghost" onClick={onClose}>
-            Cancel
+            Close
           </Button>
-          <Button variant="primary" onClick={save}>
-            Save changes
-          </Button>
-        </>
+        )
       }
     >
-      <RecForm
-        {...{ title, setTitle, detail, setDetail, priority, setPriority, assigneeId, setAssigneeId, column, setColumn, dueAt, setDueAt, linkIds, setLinkIds, users, nodes }}
-      />
+      {/* A disabled fieldset turns every field inside it read-only at once. */}
+      <fieldset disabled={!editable} className="m-0 min-w-0 border-0 p-0">
+        <RecForm
+          {...{ title, setTitle, detail, setDetail, priority, setPriority, assigneeId, setAssigneeId, column, setColumn, dueAt, setDueAt, linkIds, setLinkIds, users, nodes }}
+        />
+      </fieldset>
     </Modal>
   )
 }

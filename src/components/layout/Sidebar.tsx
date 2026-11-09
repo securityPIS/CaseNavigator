@@ -1,32 +1,17 @@
 import { NavLink, useLocation } from 'react-router-dom'
-import {
-  Building2,
-  ChevronDown,
-  ChevronLeft,
-  FolderKanban,
-  HelpCircle,
-  LayoutDashboard,
-  LayoutTemplate,
-  PanelLeft,
-  ShieldCheck,
-  Users,
-} from 'lucide-react'
+import { ChevronDown, ChevronLeft, FolderKanban, LayoutDashboard, PanelLeft, ShieldCheck } from 'lucide-react'
 import { useApp } from '@/stores/app'
 import { useVisibleCases } from '@/hooks/useAccess'
 import { cn, STATUS_META } from '@/lib/utils'
 import { Tooltip } from '@/components/ui/primitives'
-
-const ADMIN_ITEMS = [
-  { to: '/admin/company', label: 'Company Setting', icon: Building2 },
-  { to: '/admin/roles', label: 'User Role Setting', icon: Users },
-  { to: '/admin/templates', label: 'Template Customization', icon: LayoutTemplate },
-  { to: '/admin/questions', label: 'Questions Customization', icon: HelpCircle },
-]
+import { useAdminItems } from './adminNav'
 
 export function Sidebar() {
   const { sidebarCollapsed, toggleSidebar, casesExpanded, toggleCasesExpanded, adminExpanded, toggleAdminExpanded } = useApp()
   const location = useLocation()
   const cases = useVisibleCases() ?? []
+  // Only the admin pages this role may open; no admin rights, no Admin Panel.
+  const adminItems = useAdminItems()
 
   const collapsed = sidebarCollapsed
   const activeCases = cases.filter((c) => c.status !== 'closed' && c.status !== 'archived')
@@ -147,56 +132,58 @@ export function Sidebar() {
         </div>
 
         {/* Admin group */}
-        <div className="mt-4">
-          {collapsed ? (
-            <SideLink to="/admin/company" icon={ShieldCheck} label="Admin Panel" collapsed active={onAdmin} />
-          ) : (
-            <>
-              <button
-                onClick={toggleAdminExpanded}
-                aria-expanded={adminExpanded}
-                className={cn(
-                  'flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 transition-colors duration-150',
-                  onAdmin ? 'text-ink' : 'text-ink-2 hover:text-ink hover:bg-tint/5',
-                )}
-              >
-                <ShieldCheck size={17} className={cn('shrink-0', onAdmin && 'text-brand-bright')} />
-                <span className="flex-1 text-left text-[13px] font-medium">Admin Panel</span>
-                <ChevronDown
-                  size={14}
-                  className={cn('text-ink-3 transition-transform duration-250 ease-[var(--ease-out-quint)]', !adminExpanded && '-rotate-90')}
-                />
-              </button>
-              <div
-                className={cn(
-                  'grid transition-[grid-template-rows] duration-300 ease-[var(--ease-out-quint)]',
-                  adminExpanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
-                )}
-              >
-                <div className="overflow-hidden">
-                  <ul className="mt-1 space-y-px">
-                    {ADMIN_ITEMS.map((it) => (
-                      <li key={it.to}>
-                        <NavLink
-                          to={it.to}
-                          className={({ isActive }) =>
-                            cn(
-                              'flex items-center gap-2.5 rounded-lg py-2 pl-4 pr-3 ml-3 transition-colors duration-150',
-                              isActive ? 'bg-brand/12 text-brand-bright' : 'text-ink-3 hover:text-ink hover:bg-tint/5',
-                            )
-                          }
-                        >
-                          <it.icon size={15} className="shrink-0" />
-                          <span className="truncate text-[12.5px]">{it.label}</span>
-                        </NavLink>
-                      </li>
-                    ))}
-                  </ul>
+        {adminItems.length > 0 && (
+          <div className="mt-4">
+            {collapsed ? (
+              <SideLink to={adminItems[0].to} icon={ShieldCheck} label="Admin Panel" collapsed active={onAdmin} />
+            ) : (
+              <>
+                <button
+                  onClick={toggleAdminExpanded}
+                  aria-expanded={adminExpanded}
+                  className={cn(
+                    'flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 transition-colors duration-150',
+                    onAdmin ? 'text-ink' : 'text-ink-2 hover:text-ink hover:bg-tint/5',
+                  )}
+                >
+                  <ShieldCheck size={17} className={cn('shrink-0', onAdmin && 'text-brand-bright')} />
+                  <span className="flex-1 text-left text-[13px] font-medium">Admin Panel</span>
+                  <ChevronDown
+                    size={14}
+                    className={cn('text-ink-3 transition-transform duration-250 ease-[var(--ease-out-quint)]', !adminExpanded && '-rotate-90')}
+                  />
+                </button>
+                <div
+                  className={cn(
+                    'grid transition-[grid-template-rows] duration-300 ease-[var(--ease-out-quint)]',
+                    adminExpanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
+                  )}
+                >
+                  <div className="overflow-hidden">
+                    <ul className="mt-1 space-y-px">
+                      {adminItems.map((it) => (
+                        <li key={it.to}>
+                          <NavLink
+                            to={it.to}
+                            className={({ isActive }) =>
+                              cn(
+                                'flex items-center gap-2.5 rounded-lg py-2 pl-4 pr-3 ml-3 transition-colors duration-150',
+                                isActive ? 'bg-brand/12 text-brand-bright' : 'text-ink-3 hover:text-ink hover:bg-tint/5',
+                              )
+                            }
+                          >
+                            <it.icon size={15} className="shrink-0" />
+                            <span className="truncate text-[12.5px]">{it.label}</span>
+                          </NavLink>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
-              </div>
-            </>
-          )}
-        </div>
+              </>
+            )}
+          </div>
+        )}
       </nav>
 
       {/* Collapse toggle */}

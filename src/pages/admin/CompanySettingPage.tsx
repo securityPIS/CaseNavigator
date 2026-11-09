@@ -10,6 +10,7 @@ import { Modal } from '@/components/ui/Modal'
 import { PageSpinner } from '@/components/ui/PageSpinner'
 import { AdminSection, AdminShell } from './AdminShell'
 import { Field } from '@/pages/CasesPage'
+import { useSession } from '@/stores/session'
 import { toast } from '@/stores/toast'
 
 const BRAND_COLORS = ['#3B82F6', '#8B5CF6', '#10B981', '#F59E0B', '#EF4444', '#06B6D4']
@@ -41,7 +42,7 @@ export function CompanySettingPage() {
       setDraft(clean)
       await db.activities.add({
         id: `ac-${Date.now()}`,
-        actorId: 'u-jason',
+        actorId: useSession.getState().userId,
         verb: 'updated',
         object: 'company settings',
         at: new Date().toISOString(),

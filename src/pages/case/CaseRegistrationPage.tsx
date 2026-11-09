@@ -14,6 +14,7 @@ import {
   Image as ImageIcon,
   KeyRound,
   Landmark,
+  Lock,
   Megaphone,
   NotebookPen,
   Paperclip,
@@ -84,8 +85,11 @@ export function CaseRegistrationPage() {
 
   const me = users.find((u) => u.id === userId)
   const myRole = roles.find((r) => r.id === me?.role)
-  const manageSprint = can(myRole, 'sprint.manage')
-  const editCase = can(myRole, 'case.edit')
+  // A deactivated account holds no permission, whatever its role grants.
+  const active = !!me?.active
+  const viewSprint = active && can(myRole, 'sprint.view')
+  const manageSprint = viewSprint && can(myRole, 'sprint.manage')
+  const editCase = active && can(myRole, 'case.edit')
 
   const [drafting, setDrafting] = useState<Sprint | 'new' | null>(null)
   const [addingInvestigator, setAddingInvestigator] = useState(false)
@@ -95,7 +99,11 @@ export function CaseRegistrationPage() {
     [c?.documents],
   )
   const openDoc = useMemo(() => documents.find((d) => d.id === docId) ?? null, [documents, docId])
-  const openSprint = useMemo(() => sprints?.find((s) => s.id === sprintId) ?? null, [sprints, sprintId])
+  // A SPRINT opens only for roles that may read one, whatever the URL says.
+  const openSprint = useMemo(
+    () => (viewSprint ? (sprints?.find((s) => s.id === sprintId) ?? null) : null),
+    [sprints, sprintId, viewSprint],
+  )
   // One case, one SPRINT.
   const sprint = sprints?.[0]
   const sources = useMemo(() => c?.reportSources ?? [], [c?.reportSources])
@@ -120,11 +128,11 @@ export function CaseRegistrationPage() {
   useEffect(() => {
     if (!sprints || openDoc || openSprint) return
     if (!window.matchMedia('(min-width: 768px)').matches) return
-    const sp = sprints.find((s) => sprintState(s) === 'active') ?? sprints[0]
+    const sp = viewSprint ? (sprints.find((s) => sprintState(s) === 'active') ?? sprints[0]) : undefined
     if (sp) select({ kind: 'sprint', id: sp.id }, true)
     else if (documents[0]) select({ kind: 'doc', id: documents[0].id }, true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sprints, documents, openDoc, openSprint])
+  }, [sprints, documents, openDoc, openSprint, viewSprint])
 
   const storeFile = async (file: File, category: string, note?: string): Promise<CaseDocument> => {
     const blobId = uid('blob')
@@ -143,7 +151,7 @@ export function CaseRegistrationPage() {
   }
 
   const addFiles = async (list: FileList | null) => {
-    if (!list?.length || !c) return
+    if (!list?.length || !c || !editCase) return
     const added: CaseDocument[] = []
     for (const file of list) added.push(await storeFile(file, 'Lampiran'))
     await db.cases.update(caseId, { documents: [...(c.documents ?? []), ...added], updatedAt: new Date().toISOString() })
@@ -152,7 +160,7 @@ export function CaseRegistrationPage() {
   }
 
   const removeDoc = async (doc: CaseDocument) => {
-    if (!c) return
+    if (!c || !editCase) return
     const isNota = notaIds.has(doc.id)
     if (isNota && !window.confirm(`“${doc.name}” adalah nota dinas sumber laporan. Tetap hapus?`)) return
     if (doc.blobId) await db.blobs.delete(doc.blobId)
@@ -189,7 +197,7 @@ export function CaseRegistrationPage() {
   }
 
   const saveNote = async (doc: CaseDocument, note: string) => {
-    if (!c) return
+    if (!c || !editCase) return
     await db.cases.update(caseId, {
       documents: (c.documents ?? []).map((d) => (d.id === doc.id ? { ...d, note: note || undefined } : d)),
       updatedAt: new Date().toISOString(),
@@ -224,97 +232,109 @@ export function CaseRegistrationPage() {
             onRemove={removeSource}
           />
 
-          <Section
-            title="SPRINT"
-            icon={<FileSignature size={13} />}
-            summary={
-              sprint ? `${sprint.number} · ${SPRINT_STATE_META[sprintState(sprint)].label}` : 'Belum ada Surat Perintah'
-            }
-            action={
-              // One case, one SPRINT: the way to add one goes once it exists.
-              manageSprint &&
-              !sprint && (
-                <Button size="xs" variant="primary" icon={<FilePen size={12} />} onClick={() => setDrafting('new')}>
-                  Buat SPRINT
-                </Button>
-              )
-            }
-          >
-            {!sprint ? (
-              <div className="rounded-xl border border-dashed border-line-strong bg-abyss/30 px-4 py-5 text-center">
-                <p className="text-[12px] font-medium text-ink-2">Belum ada Surat Perintah</p>
-                <p className="mt-1 text-[11px] leading-relaxed text-ink-4">
-                  Tanpa SPRINT aktif, tidak ada investigator yang dapat membuka perkara ini. Satu perkara hanya
-                  memiliki satu SPRINT.
-                </p>
-                {manageSprint && (
-                  <Button className="mt-3" size="sm" variant="primary" icon={<FilePen size={13} />} onClick={() => setDrafting('new')}>
-                    Buat SPRINT dari template
-                  </Button>
+          {viewSprint ? (
+            <>
+              <Section
+                title="SPRINT"
+                icon={<FileSignature size={13} />}
+                summary={
+                  sprint ? `${sprint.number} · ${SPRINT_STATE_META[sprintState(sprint)].label}` : 'Belum ada Surat Perintah'
+                }
+                action={
+                  // One case, one SPRINT: the way to add one goes once it exists.
+                  manageSprint &&
+                  !sprint && (
+                    <Button size="xs" variant="primary" icon={<FilePen size={12} />} onClick={() => setDrafting('new')}>
+                      Buat SPRINT
+                    </Button>
+                  )
+                }
+              >
+                {!sprint ? (
+                  <div className="rounded-xl border border-dashed border-line-strong bg-abyss/30 px-4 py-5 text-center">
+                    <p className="text-[12px] font-medium text-ink-2">Belum ada Surat Perintah</p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-ink-4">
+                      Tanpa SPRINT aktif, tidak ada investigator yang dapat membuka perkara ini. Satu perkara hanya
+                      memiliki satu SPRINT.
+                    </p>
+                    {manageSprint && (
+                      <Button className="mt-3" size="sm" variant="primary" icon={<FilePen size={13} />} onClick={() => setDrafting('new')}>
+                        Buat SPRINT dari template
+                      </Button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <SprintListItem
+                      sprint={sprint}
+                      active={sprint.id === sprintId}
+                      onSelect={() => select({ kind: 'sprint', id: sprint.id })}
+                    />
+                    <p className="text-[10.5px] leading-relaxed text-ink-4">
+                      Satu perkara hanya memiliki satu SPRINT. Tim diatur di Investigators.
+                    </p>
+                  </div>
                 )}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <SprintListItem
-                  sprint={sprint}
-                  active={sprint.id === sprintId}
-                  onSelect={() => select({ kind: 'sprint', id: sprint.id })}
-                />
-                <p className="text-[10.5px] leading-relaxed text-ink-4">
-                  Satu perkara hanya memiliki satu SPRINT. Tim diatur di Investigators.
-                </p>
-              </div>
-            )}
-          </Section>
+              </Section>
 
-          <Section
-            title="Investigators"
-            icon={<Users size={13} />}
-            summary={
-              !sprint
-                ? 'Ditunjuk lewat SPRINT'
-                : sprint.members.length === 0
-                  ? 'Belum ada investigator'
-                  : `${sprint.members.length} investigator · ${
-                      users.find((u) => u.id === (sprint.members.find((m) => m.position === 'ketua') ?? sprint.members[0]).userId)?.name ?? ''
-                    }`
-            }
-            action={
-              manageSprint &&
-              sprint &&
-              ['active', 'scheduled'].includes(sprintState(sprint)) && (
-                <Button size="xs" variant="ghost" icon={<UserPlus size={11} />} onClick={() => setAddingInvestigator(true)}>
-                  Tambah
-                </Button>
-              )
-            }
-          >
-            {sprint ? (
-              <InvestigatorList
-                sprint={sprint}
-                letter={letter}
+              <Section
+                title="Investigators"
+                icon={<Users size={13} />}
+                summary={
+                  !sprint
+                    ? 'Ditunjuk lewat SPRINT'
+                    : sprint.members.length === 0
+                      ? 'Belum ada investigator'
+                      : `${sprint.members.length} investigator · ${
+                          users.find((u) => u.id === (sprint.members.find((m) => m.position === 'ketua') ?? sprint.members[0]).userId)?.name ?? ''
+                        }`
+                }
+                action={
+                  manageSprint &&
+                  sprint &&
+                  ['active', 'scheduled'].includes(sprintState(sprint)) && (
+                    <Button size="xs" variant="ghost" icon={<UserPlus size={11} />} onClick={() => setAddingInvestigator(true)}>
+                      Tambah
+                    </Button>
+                  )
+                }
+              >
+                {sprint ? (
+                  <InvestigatorList
+                    sprint={sprint}
+                    letter={letter}
+                    users={users}
+                    editable={manageSprint && ['active', 'scheduled'].includes(sprintState(sprint))}
+                  />
+                ) : (
+                  <p className="text-[11.5px] text-ink-4">Investigator ditunjuk lewat SPRINT. Buat SPRINT terlebih dahulu.</p>
+                )}
+              </Section>
+
+              <AccessList
+                sprints={sprints}
+                viewerIds={c.viewerIds ?? []}
                 users={users}
-                editable={manageSprint && ['active', 'scheduled'].includes(sprintState(sprint))}
+                roles={roles}
+                meId={userId}
+                editable={manageSprint}
+                onChange={saveViewers}
               />
-            ) : (
-              <p className="text-[11.5px] text-ink-4">Investigator ditunjuk lewat SPRINT. Buat SPRINT terlebih dahulu.</p>
-            )}
-          </Section>
-
-          <AccessList
-            sprints={sprints}
-            viewerIds={c.viewerIds ?? []}
-            users={users}
-            roles={roles}
-            meId={userId}
-            editable={manageSprint}
-            onChange={saveViewers}
-          />
+            </>
+          ) : (
+            <Section title="SPRINT" icon={<FileSignature size={13} />} summary="Tidak dapat dilihat dengan peran ini">
+              <p className="flex items-start gap-2 text-[11.5px] leading-relaxed text-ink-4">
+                <Lock size={12} className="mt-0.5 shrink-0" />
+                Surat Perintah, investigator dan daftar akses perkara ini memerlukan izin View SPRINT.
+              </p>
+            </Section>
+          )}
 
           <DocumentList
             documents={documents}
             openId={docId}
             notaIds={notaIds}
+            editable={editCase}
             onSelect={(id) => select({ kind: 'doc', id })}
             onAdd={addFiles}
             onRemove={removeDoc}
@@ -337,6 +357,7 @@ export function CaseRegistrationPage() {
           <DocumentViewer
             key={openDoc.id}
             doc={openDoc}
+            editable={editCase}
             onBack={() => select(null)}
             onRemove={() => removeDoc(openDoc)}
             onSaveNote={(note) => saveNote(openDoc, note)}
@@ -917,7 +938,10 @@ function AccessList({
     return [...ids].map((id) => users.find((u) => u.id === id)).filter((u): u is User => !!u)
   }, [sprints, users])
 
-  const viewAll = (u: User) => can(roles.find((r) => r.id === u.role), 'case.viewAll')
+  const viewAll = (u: User) => {
+    const role = roles.find((r) => r.id === u.role)
+    return can(role, 'case.view') && can(role, 'case.viewAll')
+  }
   const added = viewerIds.map((id) => users.find((u) => u.id === id)).filter((u): u is User => !!u)
   const viaRole = users.filter((u) => u.active && viewAll(u) && !viaSprint.some((v) => v.id === u.id))
   // Anyone who doesn't already reach the case some other way.
@@ -1037,7 +1061,7 @@ function AccessList({
           <div className="flex flex-wrap gap-2">
             {viaRole.length === 0 ? <p className="text-[11.5px] text-ink-4">Tidak ada.</p> : viaRole.map((u) => chip(u, 'role'))}
           </div>
-          {editable && <p className="mt-1.5 text-[10.5px] text-ink-4">Diatur lewat peran di Admin → User Role Setting.</p>}
+          {editable && <p className="mt-1.5 text-[10.5px] text-ink-4">Diatur lewat peran di Admin → User Setting → User Role Setting.</p>}
         </div>
       </div>
     </Section>
@@ -1050,6 +1074,7 @@ function DocumentList({
   documents,
   openId,
   notaIds,
+  editable,
   onSelect,
   onAdd,
   onRemove,
@@ -1057,6 +1082,7 @@ function DocumentList({
   documents: CaseDocument[]
   openId: string | null
   notaIds: Set<string>
+  editable: boolean
   onSelect: (id: string) => void
   onAdd: (list: FileList | null) => void
   onRemove: (doc: CaseDocument) => void
@@ -1070,9 +1096,11 @@ function DocumentList({
       icon={<ClipboardList size={13} />}
       summary={documents.length === 0 ? 'Belum ada dokumen' : `${documents.length} dokumen dasar investigasi`}
       action={
-        <Button size="xs" variant="outline" icon={<Upload size={12} />} onClick={browse}>
-          Unggah
-        </Button>
+        editable && (
+          <Button size="xs" variant="outline" icon={<Upload size={12} />} onClick={browse}>
+            Unggah
+          </Button>
+        )
       }
     >
       <p className="mb-3 text-[11px] leading-relaxed text-ink-4">Dokumen yang dijadikan dasar investigasi.</p>
@@ -1087,7 +1115,9 @@ function DocumentList({
         }}
       />
 
-      {documents.length === 0 ? (
+      {documents.length === 0 && !editable ? (
+        <p className="text-[11.5px] text-ink-4">Belum ada dokumen.</p>
+      ) : documents.length === 0 ? (
         <button
           onClick={browse}
           onDragOver={(e) => e.preventDefault()}
@@ -1107,7 +1137,7 @@ function DocumentList({
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => {
             e.preventDefault()
-            onAdd(e.dataTransfer.files)
+            if (editable) onAdd(e.dataTransfer.files)
           }}
         >
           {documents.map((d) => {
@@ -1142,14 +1172,16 @@ function DocumentList({
                       {d.note && <span className="mt-1 line-clamp-2 block text-[11px] leading-snug text-ink-3">{d.note}</span>}
                     </span>
                   </button>
-                  <IconButton
-                    label={`Hapus ${d.name}`}
-                    size={26}
-                    className="opacity-0 transition-opacity hover:text-danger group-hover:opacity-100"
-                    onClick={() => onRemove(d)}
-                  >
-                    <Trash2 size={13} />
-                  </IconButton>
+                  {editable && (
+                    <IconButton
+                      label={`Hapus ${d.name}`}
+                      size={26}
+                      className="opacity-0 transition-opacity hover:text-danger group-hover:opacity-100"
+                      onClick={() => onRemove(d)}
+                    >
+                      <Trash2 size={13} />
+                    </IconButton>
+                  )}
                 </div>
               </li>
             )
@@ -1164,11 +1196,13 @@ function DocumentList({
 
 function DocumentViewer({
   doc,
+  editable,
   onBack,
   onRemove,
   onSaveNote,
 }: {
   doc: CaseDocument
+  editable: boolean
   onBack: () => void
   onRemove: () => void
   onSaveNote: (note: string) => Promise<void>
@@ -1202,11 +1236,13 @@ function DocumentViewer({
         <Button size="sm" variant="outline" icon={<Download size={13} />} onClick={() => downloadBlob(doc.blobId, doc.name)}>
           Unduh
         </Button>
-        <Tooltip label="Hapus dokumen">
-          <IconButton label="Hapus dokumen" className="hover:text-danger" onClick={onRemove}>
-            <Trash2 size={15} />
-          </IconButton>
-        </Tooltip>
+        {editable && (
+          <Tooltip label="Hapus dokumen">
+            <IconButton label="Hapus dokumen" className="hover:text-danger" onClick={onRemove}>
+              <Trash2 size={15} />
+            </IconButton>
+          </Tooltip>
+        )}
       </header>
 
       {/* Description — why this document grounds the investigation */}
@@ -1252,9 +1288,11 @@ function DocumentViewer({
                 {doc.note || 'Belum ada deskripsi.'}
               </p>
             </div>
-            <Button size="xs" variant="ghost" icon={<Pencil size={11} />} onClick={() => setEditing(true)}>
-              {doc.note ? 'Ubah' : 'Tambah'}
-            </Button>
+            {editable && (
+              <Button size="xs" variant="ghost" icon={<Pencil size={11} />} onClick={() => setEditing(true)}>
+                {doc.note ? 'Ubah' : 'Tambah'}
+              </Button>
+            )}
           </div>
         )}
       </div>

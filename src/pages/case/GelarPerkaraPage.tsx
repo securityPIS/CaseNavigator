@@ -25,6 +25,7 @@ import { cn, formatBytes, formatDateTime, uid } from '@/lib/utils'
 import { Badge, Button, EmptyState, IconButton, Input, Select, Textarea, tone } from '@/components/ui/primitives'
 import { Modal } from '@/components/ui/Modal'
 import { Field } from '@/pages/CasesPage'
+import { useCan, useMe } from '@/hooks/useAccess'
 import { toast } from '@/stores/toast'
 
 const STATUS_META: Record<GelarStatus, { label: string; color: string }> = {
@@ -48,6 +49,8 @@ export function GelarPerkaraPage() {
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState<GelarStatus | 'all'>('all')
   const [creating, setCreating] = useState(false)
+  // Recording a gelar perkara changes the case, so it takes case.edit.
+  const canEdit = useCan('case.edit')
 
   const items = useLiveQuery(
     () => db.gelarPerkara.where('caseId').equals(caseId).reverse().sortBy('scheduledAt'),
@@ -101,9 +104,11 @@ export function GelarPerkaraPage() {
               onChange={(e) => setQuery(e.target.value)}
               className="h-8 text-[12px]"
             />
-            <Button size="sm" variant="primary" icon={<Plus size={13} />} onClick={() => setCreating(true)}>
-              Baru
-            </Button>
+            {canEdit && (
+              <Button size="sm" variant="primary" icon={<Plus size={13} />} onClick={() => setCreating(true)}>
+                Baru
+              </Button>
+            )}
           </div>
           <div className="mt-2 flex items-center gap-2">
             <div className="w-[150px]">
@@ -134,9 +139,11 @@ export function GelarPerkaraPage() {
               }
               action={
                 items.length === 0 ? (
-                  <Button variant="primary" icon={<Plus size={14} />} onClick={() => setCreating(true)}>
-                    Gelar Perkara Baru
-                  </Button>
+                  canEdit ? (
+                    <Button variant="primary" icon={<Plus size={14} />} onClick={() => setCreating(true)}>
+                      Gelar Perkara Baru
+                    </Button>
+                  ) : undefined
                 ) : (
                   <Button
                     onClick={() => {
@@ -162,7 +169,7 @@ export function GelarPerkaraPage() {
       {/* Detail column */}
       <div className={cn('min-w-0 flex-1', !open && 'hidden md:block')}>
         {open ? (
-          <GelarDetail key={open.id} item={open} onBack={() => select(null)} />
+          <GelarDetail key={open.id} item={open} editable={canEdit} onBack={() => select(null)} />
         ) : (
           <div className="flex h-full items-center justify-center">
             <EmptyState
@@ -174,7 +181,7 @@ export function GelarPerkaraPage() {
         )}
       </div>
 
-      {creating && (
+      {creating && canEdit && (
         <NewGelarModal caseId={caseId} existing={items.length} onClose={() => setCreating(false)} onCreated={select} />
       )}
     </div>
@@ -245,7 +252,7 @@ function GelarRow({
 
 /* --------------------------------------------------------------- Detail */
 
-function GelarDetail({ item, onBack }: { item: GelarPerkara; onBack: () => void }) {
+function GelarDetail({ item, editable, onBack }: { item: GelarPerkara; editable: boolean; onBack: () => void }) {
   const st = STATUS_META[item.status]
 
   // Text fields edit locally and commit on "Simpan". Structural fields (status,
@@ -258,8 +265,10 @@ function GelarDetail({ item, onBack }: { item: GelarPerkara; onBack: () => void 
   const [conclusion, setConclusion] = useState(item.conclusion)
   const [saving, setSaving] = useState(false)
 
-  const patch = (data: Partial<GelarPerkara>) =>
-    db.gelarPerkara.update(item.id, { ...data, updatedAt: new Date().toISOString() })
+  const patch = async (data: Partial<GelarPerkara>) => {
+    if (!editable) return
+    await db.gelarPerkara.update(item.id, { ...data, updatedAt: new Date().toISOString() })
+  }
 
   const setStatus = (next: GelarStatus) => patch({ status: next })
 
@@ -303,6 +312,7 @@ function GelarDetail({ item, onBack }: { item: GelarPerkara; onBack: () => void 
   }
 
   const remove = async () => {
+    if (!editable) return
     for (const d of [...item.evidence, ...item.documents]) if (d.blobId) await db.blobs.delete(d.blobId)
     await db.gelarPerkara.delete(item.id)
     toast.success('Gelar perkara dihapus', `${item.number} dihapus dari daftar.`)
@@ -328,12 +338,20 @@ function GelarDetail({ item, onBack }: { item: GelarPerkara; onBack: () => void 
           </p>
         </div>
 
-        <Button variant="danger" size="sm" icon={<Trash2 size={13} />} onClick={remove}>
-          Hapus
-        </Button>
-        <Button variant="primary" size="sm" onClick={save} loading={saving}>
-          Simpan
-        </Button>
+        {editable ? (
+          <>
+            <Button variant="danger" size="sm" icon={<Trash2 size={13} />} onClick={remove}>
+              Hapus
+            </Button>
+            <Button variant="primary" size="sm" onClick={save} loading={saving}>
+              Simpan
+            </Button>
+          </>
+        ) : (
+          <Badge color="#6A7FA3" size="sm">
+            Hanya baca
+          </Badge>
+        )}
       </header>
 
       {/* Body */}
@@ -349,8 +367,9 @@ function GelarDetail({ item, onBack }: { item: GelarPerkara; onBack: () => void 
               <button
                 key={s}
                 onClick={() => setStatus(s)}
+                disabled={!editable}
                 className={cn(
-                  'flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[11.5px] transition-colors',
+                  'flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[11.5px] transition-colors disabled:cursor-default',
                   on ? 'border-brand/50 bg-brand/10 text-ink' : 'border-line-soft text-ink-3 hover:border-line-strong hover:text-ink-2',
                 )}
               >
@@ -364,16 +383,16 @@ function GelarDetail({ item, onBack }: { item: GelarPerkara; onBack: () => void 
         {/* Core fields */}
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Judul gelar perkara" required>
-            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="mis. Gelar perkara awal" />
+            <Input value={title} readOnly={!editable} onChange={(e) => setTitle(e.target.value)} placeholder="mis. Gelar perkara awal" />
           </Field>
           <Field label="Waktu (datetime)">
-            <Input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} />
+            <Input type="datetime-local" value={scheduledAt} readOnly={!editable} onChange={(e) => setScheduledAt(e.target.value)} />
           </Field>
           <Field label="Tempat">
-            <Input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Ruang rapat / lokasi" />
+            <Input value={location} readOnly={!editable} onChange={(e) => setLocation(e.target.value)} placeholder="Ruang rapat / lokasi" />
           </Field>
           <Field label="Peserta" hint="Pisahkan dengan koma.">
-            <Input value={participants} onChange={(e) => setParticipants(e.target.value)} placeholder="Ketua tim, Penyidik, …" />
+            <Input value={participants} readOnly={!editable} onChange={(e) => setParticipants(e.target.value)} placeholder="Ketua tim, Penyidik, …" />
           </Field>
         </div>
 
@@ -394,6 +413,7 @@ function GelarDetail({ item, onBack }: { item: GelarPerkara; onBack: () => void 
           title="Evidence"
           icon={<Boxes size={11} />}
           docs={item.evidence}
+          editable={editable}
           onAdd={addFiles('evidence')}
           onRemove={removeFile('evidence')}
           emptyHint="Unggah foto atau video evidence yang dibahas. Klik thumbnail untuk melihat."
@@ -404,6 +424,7 @@ function GelarDetail({ item, onBack }: { item: GelarPerkara; onBack: () => void 
           title="Dokumentasi gelar perkara"
           icon={<Paperclip size={11} />}
           docs={item.documents}
+          editable={editable}
           onAdd={addFiles('documents')}
           onRemove={removeFile('documents')}
           emptyHint="Notulen, foto sesi, daftar hadir. Klik thumbnail untuk melihat."
@@ -414,6 +435,7 @@ function GelarDetail({ item, onBack }: { item: GelarPerkara; onBack: () => void 
           <Textarea
             rows={5}
             value={conclusion}
+            readOnly={!editable}
             onChange={(e) => setConclusion(e.target.value)}
             placeholder="Ringkasan pembahasan dan keputusan gelar perkara…"
           />
@@ -441,6 +463,7 @@ function NewGelarModal({
   onClose: () => void
   onCreated: (id: string) => void
 }) {
+  const { me } = useMe()
   const [number, setNumber] = useState('')
   const [title, setTitle] = useState('')
   const [scheduledAt, setScheduledAt] = useState(() => toLocalInput(new Date().toISOString()))
@@ -484,7 +507,7 @@ function NewGelarModal({
       await db.activities.add({
         id: uid('ac'),
         caseId,
-        actorId: 'u-jason',
+        actorId: me?.id ?? 'unknown',
         verb: 'menjadwalkan',
         object: `gelar perkara ${title.trim()}`,
         at: now,
@@ -566,6 +589,7 @@ function MediaSection({
   title,
   icon,
   docs,
+  editable,
   onAdd,
   onRemove,
   emptyHint,
@@ -573,6 +597,7 @@ function MediaSection({
   title: string
   icon: ReactNode
   docs: GelarDoc[]
+  editable: boolean
   onAdd: (list: FileList | null) => void
   onRemove: (doc: GelarDoc) => void
   emptyHint: string
@@ -593,13 +618,17 @@ function MediaSection({
           {icon} {title}
           {docs.length > 0 && <span className="text-ink-4 tnum">· {docs.length}</span>}
         </h3>
-        <Button size="xs" variant="outline" icon={<Upload size={12} />} onClick={browse}>
-          Unggah
-        </Button>
+        {editable && (
+          <Button size="xs" variant="outline" icon={<Upload size={12} />} onClick={browse}>
+            Unggah
+          </Button>
+        )}
         <input ref={fileRef} type="file" multiple hidden onChange={onInput} />
       </div>
 
-      {docs.length === 0 ? (
+      {docs.length === 0 && !editable ? (
+        <p className="text-[11.5px] text-ink-4">Belum ada berkas.</p>
+      ) : docs.length === 0 ? (
         <button
           onClick={browse}
           onDragOver={(e) => e.preventDefault()}
@@ -618,20 +647,22 @@ function MediaSection({
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => {
             e.preventDefault()
-            onAdd(e.dataTransfer.files)
+            if (editable) onAdd(e.dataTransfer.files)
           }}
           className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5"
         >
           {docs.map((d) => (
-            <MediaThumb key={d.id} doc={d} onOpen={() => setPreview(d)} onRemove={() => onRemove(d)} />
+            <MediaThumb key={d.id} doc={d} onOpen={() => setPreview(d)} onRemove={editable ? () => onRemove(d) : undefined} />
           ))}
-          <button
-            onClick={browse}
-            className="flex aspect-square flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-line-strong bg-abyss/35 text-ink-4 transition-colors hover:border-brand/60 hover:text-brand-bright"
-          >
-            <Upload size={16} />
-            <span className="text-[10px]">Tambah</span>
-          </button>
+          {editable && (
+            <button
+              onClick={browse}
+              className="flex aspect-square flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-line-strong bg-abyss/35 text-ink-4 transition-colors hover:border-brand/60 hover:text-brand-bright"
+            >
+              <Upload size={16} />
+              <span className="text-[10px]">Tambah</span>
+            </button>
+          )}
         </div>
       )}
 
@@ -641,7 +672,7 @@ function MediaSection({
 }
 
 /** One thumbnail in a MediaSection grid. */
-function MediaThumb({ doc, onOpen, onRemove }: { doc: GelarDoc; onOpen: () => void; onRemove: () => void }) {
+function MediaThumb({ doc, onOpen, onRemove }: { doc: GelarDoc; onOpen: () => void; onRemove?: () => void }) {
   const url = useBlobUrl(doc.blobId, doc.mime)
 
   return (
@@ -670,14 +701,16 @@ function MediaThumb({ doc, onOpen, onRemove }: { doc: GelarDoc; onOpen: () => vo
         {doc.name}
       </span>
 
-      <button
-        onClick={onRemove}
-        aria-label="Hapus berkas"
-        title="Hapus berkas"
-        className="absolute right-1 top-1 flex size-5 items-center justify-center rounded-md bg-void/80 text-ink-3 opacity-0 backdrop-blur-sm transition-opacity hover:text-danger group-hover:opacity-100"
-      >
-        <X size={11} />
-      </button>
+      {onRemove && (
+        <button
+          onClick={onRemove}
+          aria-label="Hapus berkas"
+          title="Hapus berkas"
+          className="absolute right-1 top-1 flex size-5 items-center justify-center rounded-md bg-void/80 text-ink-3 opacity-0 backdrop-blur-sm transition-opacity hover:text-danger group-hover:opacity-100"
+        >
+          <X size={11} />
+        </button>
+      )}
     </div>
   )
 }
